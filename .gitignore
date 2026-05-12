@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+workspace/*
+output/*
+logs/*
+kaggle_pack/*
+.DS_Store
+
+!workspace/.gitkeep
+!output/.gitkeep
+!logs/.gitkeep
+!kaggle_pack/.gitkeep

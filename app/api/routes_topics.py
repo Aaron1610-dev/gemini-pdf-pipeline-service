@@ -1,7 +1,7 @@
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from app.api.routes_assets import asset_head_response, validate_object_key, _stream_minio_object
 from app.core.config import get_settings
@@ -80,9 +80,27 @@ def preview_topic_pdf(job_id: str, topic_num: int):
             if object_key:
                 safe_key = validate_object_key(object_key)
                 return _stream_minio_object(get_settings().minio_bucket, safe_key)
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={
+                    "ok": False,
+                    "message": f"Không tìm thấy file PDF preview cho Topic {topic_num:02d}.",
+                    "checked_paths": (info.get("debug") or {}).get("checked_paths", []),
+                    "pdf_candidates": (info.get("debug") or {}).get("pdf_candidates", []),
+                },
+            )
         except FileNotFoundError:
-            pass
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            info = {}
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "ok": False,
+                "message": f"Không tìm thấy file PDF preview cho Topic {topic_num:02d}.",
+                "detail": str(exc),
+                "checked_paths": (info.get("debug") or {}).get("checked_paths", []),
+                "pdf_candidates": (info.get("debug") or {}).get("pdf_candidates", []),
+            },
+        )
 
 
 @router.head("/{job_id}/topics/{topic_num}/preview")
@@ -106,15 +124,21 @@ def head_topic_pdf(job_id: str, topic_num: int):
                 return asset_head_response(get_settings().minio_bucket, safe_key)
         except FileNotFoundError:
             pass
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Không tìm thấy file PDF preview cho Topic {topic_num:02d}.") from exc
 
 
 @router.get("/{job_id}/topics/{topic_num}/preview-info")
 def get_topic_preview_info(job_id: str, topic_num: int):
+    # topic_preview_info now gracefully handles missing topics_partial.json,
+    # so we only raise 404 if the job itself is not found.
     try:
         return topic_preview_info(job_id, topic_num)
+    except HTTPException:
+        raise
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
 @router.post("/{job_id}/topics/approve")

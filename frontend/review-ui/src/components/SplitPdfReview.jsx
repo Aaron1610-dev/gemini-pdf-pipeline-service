@@ -1,30 +1,60 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-function PdfPreviewCard({ kind, label, url, pageHint, missingMessage, onLoadKey }) {
-  const [loading, setLoading] = useState(Boolean(url));
-  const [available, setAvailable] = useState(Boolean(url));
+/**
+ * PdfPreviewCard — shows an iframe for a PDF preview URL.
+ *
+ * Strategy:
+ *  1. Immediately show a loading state.
+ *  2. Run a HEAD check against the URL.
+ *  3a. If HEAD → 200, render the iframe (PDF loads normally).
+ *  3b. If HEAD → non-200 or network error, show the friendly missing state.
+ *
+ * This prevents the browser from ever rendering a raw "Not Found" page
+ * inside the iframe.
+ */
+function PdfPreviewCard({
+  kind,
+  label,
+  url,
+  pageHint,
+  missingMessage,
+  missingDetail,
+  onLoadKey,
+}) {
+  const [headState, setHeadState] = useState(url ? "checking" : "missing");
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const cancelRef = useRef(false);
 
   useEffect(() => {
-    setLoading(Boolean(url));
-    setAvailable(Boolean(url));
-    let cancelled = false;
+    cancelRef.current = false;
+    setHeadState(url ? "checking" : "missing");
+
+    if (!url) return;
+
     async function checkPreview() {
-      if (!url) return;
       try {
-        const response = await fetch(url, { method: "HEAD" });
-        if (!cancelled) {
-          setAvailable(response.ok);
-          if (!response.ok) setLoading(false);
+        const response = await fetch(
+          `${url}${url.includes("?") ? "&" : "?"}_check=${Date.now()}`,
+          { method: "HEAD" },
+        );
+        if (!cancelRef.current) {
+          setHeadState(response.ok ? "ok" : "missing");
         }
       } catch {
-        if (!cancelled) setAvailable(true);
+        if (!cancelRef.current) setHeadState("missing");
       }
     }
+
     checkPreview();
+
     return () => {
-      cancelled = true;
+      cancelRef.current = true;
     };
-  }, [url, onLoadKey]);
+  }, [url, onLoadKey, reloadVersion]);
+
+  const iframeSrc = url && headState === "ok"
+    ? `${url}${url.includes("?") ? "&" : "?"}_v=${reloadVersion}`
+    : null;
 
   return (
     <section className={`pdf-preview-card ${kind}`}>
@@ -33,14 +63,53 @@ function PdfPreviewCard({ kind, label, url, pageHint, missingMessage, onLoadKey 
           <h3>{label}</h3>
           {pageHint ? <p>{pageHint}</p> : null}
         </div>
+        {url && headState === "ok" ? (
+          <button
+            type="button"
+            className="linkButton reloadPreviewBtn"
+            title="Thử tải lại preview"
+            onClick={() => setReloadVersion((v) => v + 1)}
+          >
+            ↺ Tải lại
+          </button>
+        ) : null}
       </div>
-      {url && available ? (
+
+      {headState === "checking" ? (
+        <div className="pdfFrameWrap pdfChecking">
+          <div className="previewLoadingOverlay">Đang kiểm tra preview...</div>
+        </div>
+      ) : headState === "ok" && iframeSrc ? (
         <div className="pdfFrameWrap">
-          {loading ? <div className="previewLoadingOverlay">Đang tải preview...</div> : null}
-          <iframe className="pdf-frame" src={url} title={label} onLoad={() => setLoading(false)} />
+          <iframe
+            className="pdf-frame"
+            src={iframeSrc}
+            title={label}
+          />
         </div>
       ) : (
-        <div className="pdfMissingState">{missingMessage || "Chưa có file preview."}</div>
+        <div className="pdfMissingState">
+          <span className="pdfMissingIcon" aria-hidden="true">PDF</span>
+          <strong>
+            {missingMessage ||
+              (kind === "source" ? "Chưa hiển thị được sách gốc" : "Chưa có PDF chủ đề")}
+          </strong>
+          <span className="pdfMissingDetail">
+            {missingDetail ||
+              (kind === "source"
+                ? "File PDF đã được lưu, nhưng preview chưa sẵn sàng. Bạn có thể thử tải lại hoặc mở Debug."
+                : "Hãy trích xuất chủ đề trước. Nếu đã trích xuất, kiểm tra Debug để xem đường dẫn preview.")}
+          </span>
+          {url ? (
+            <button
+              type="button"
+              className="reloadPreviewBtn"
+              onClick={() => setReloadVersion((v) => v + 1)}
+            >
+              Tải lại preview
+            </button>
+          ) : null}
+        </div>
       )}
     </section>
   );
@@ -57,6 +126,9 @@ export default function SplitPdfReview({
   extractedPageHint,
   extractedStatusBadge,
   missingExtractedMessage,
+  missingExtractedDetail,
+  extractedDebugPaths,
+  extractedDebugCandidates,
   children,
 }) {
   return (
@@ -66,7 +138,9 @@ export default function SplitPdfReview({
           <h3>{title}</h3>
           {description ? <p>{description}</p> : null}
         </div>
-        {extractedStatusBadge ? <div className="splitStatusSlot">{extractedStatusBadge}</div> : null}
+        {extractedStatusBadge ? (
+          <div className="splitStatusSlot">{extractedStatusBadge}</div>
+        ) : null}
       </div>
       <div className="split-preview-grid">
         <PdfPreviewCard
@@ -74,7 +148,8 @@ export default function SplitPdfReview({
           label={sourceLabel}
           url={sourcePreviewUrl}
           pageHint={sourcePageHint}
-          missingMessage="Chưa có preview sách gốc."
+          missingMessage="Chưa hiển thị được sách gốc"
+          missingDetail="File PDF đã được lưu, nhưng preview chưa sẵn sàng. Bạn có thể thử tải lại hoặc mở Debug."
           onLoadKey={sourcePreviewUrl}
         />
         <PdfPreviewCard
@@ -83,6 +158,7 @@ export default function SplitPdfReview({
           url={extractedPreviewUrl}
           pageHint={extractedPageHint}
           missingMessage={missingExtractedMessage}
+          missingDetail={missingExtractedDetail}
           onLoadKey={extractedPreviewUrl}
         />
       </div>

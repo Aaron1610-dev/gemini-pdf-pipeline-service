@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getAssetPreviewUrl, getSourcePreviewUrl, getTopicPreviewInfo, getTopicPreviewUrl } from "../api/reviewApi.js";
+import { getSourcePreviewUrl, getTopicPreviewInfo, getTopicPreviewUrl } from "../api/reviewApi.js";
 import EmptyState from "./EmptyState.jsx";
 import ErrorState from "./ErrorState.jsx";
 import LoadingState from "./LoadingState.jsx";
@@ -24,6 +24,8 @@ export default function TopicReviewView({
   topics,
   approved,
   loading,
+  status,
+  jobStatus,
   error,
   onChange,
   onLoad,
@@ -48,13 +50,15 @@ export default function TopicReviewView({
   const [localError, setLocalError] = useState("");
 
   const approvedCount = safeTopics.filter((topic) => topic.approved || topic.metadata_edu_saved).length;
+  const pendingCount = Math.max(safeTopics.length - approvedCount, 0);
+  const isExtracting = jobStatus === "extracting_topics" || status?.status === "extracting_topics";
   const selectedTopic = safeTopics[Math.min(selectedIndex, Math.max(safeTopics.length - 1, 0))] || null;
   const selectedTopicNum = selectedTopic?.topic_num;
   const previewUrl = useMemo(() => {
     if (!jobId || !selectedTopicNum) return "";
     return `${getTopicPreviewUrl(jobId, selectedTopicNum)}?v=${previewVersion}`;
   }, [jobId, selectedTopicNum, previewVersion]);
-  const extractedPreviewUrl = previewLoading || previewInfo?.local_preview_available || previewInfo?.asset_object_key ? previewUrl : "";
+  const extractedPreviewUrl = selectedTopic ? previewUrl : "";
   const sourcePreviewUrl = useMemo(() => (jobId ? getSourcePreviewUrl(jobId) : ""), [jobId]);
 
   useEffect(() => {
@@ -122,83 +126,173 @@ export default function TopicReviewView({
           <h2>Bước 2: Duyệt chủ đề</h2>
           <p className="muted">Đối chiếu sách gốc với PDF chủ đề đã được AI cắt ra.</p>
         </div>
-        <div className="topicHeaderActions">
-          <button type="button" onClick={onExtract} disabled={loading || approving}>
-            {safeTopics.length ? "Trích xuất lại" : "Trích xuất chủ đề"}
-          </button>
-          <button type="button" className="secondary-action" onClick={onLoad} disabled={loading || approving}>Tải lại</button>
-        </div>
-      </div>
-
-      <div className="summaryCards">
-        <div className="summaryCard"><span>Tổng chủ đề</span><strong>{safeTopics.length}</strong></div>
-        <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}/{safeTopics.length}</strong></div>
-        <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Đã duyệt tất cả" : "Chờ duyệt"}</strong></div>
-      </div>
-
-      {localMessage ? <div className="successBanner compactBanner">{localMessage}</div> : null}
-      {localError ? <ErrorState message={localError} /> : null}
-      {loading ? <LoadingState message="Đang tải topics..." /> : null}
-      {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
-      {!loading && !error && topics == null ? <EmptyState message="Chưa có dữ liệu topic. Hãy trích xuất hoặc tải topics cho job đang chọn." /> : null}
-      {!loading && !error && topics != null && safeTopics.length === 0 ? <EmptyState message="Danh sách topic đang trống." /> : null}
-
-      {safeTopics.length > 0 ? (
-        <>
-          <TopicList topics={safeTopics} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
-          <SplitPdfReview
-            title="Đối chiếu bản gốc và bản cắt"
-            description="Sách giáo khoa gốc ở bên trái, kết quả trích xuất của topic đang chọn ở bên phải."
-            sourcePreviewUrl={sourcePreviewUrl}
-            extractedPreviewUrl={extractedPreviewUrl}
-            sourceLabel="Sách giáo khoa gốc"
-            extractedLabel="Topic đã trích xuất"
-            sourcePageHint="Bản PDF nguồn của phiên duyệt"
-            extractedPageHint={selectedTopic ? `Topic ${pad2(selectedTopic.topic_num)} · Trang ${selectedTopic.start || "-"}-${selectedTopic.end || "-"}` : ""}
-            extractedStatusBadge={<span className={`status-chip ${topicStatus(selectedTopic).tone}`}>{topicStatus(selectedTopic).label}</span>}
-            missingExtractedMessage={previewError || "Chưa tìm thấy file PDF preview cho chủ đề này."}
-          >
-            {previewLoading ? <LoadingState message="Đang tải thông tin preview..." /> : null}
-            <TopicEditorCard
-              topic={selectedTopic}
-              loading={loading || approving}
-              onUpdate={updateSelected}
-              onSave={onSave}
-              onApprove={approveSelected}
-              onExtractLessons={onExtractLessonsForTopic}
-            />
-          </SplitPdfReview>
-        </>
-      ) : null}
-
-      <div className="advancedActions">
-        <button type="button" className="linkButton" onClick={() => setBulkOpen((value) => !value)}>
-          {bulkOpen ? "Ẩn chỉnh sửa nâng cao" : "Chỉnh sửa nâng cao"}
-        </button>
-        {bulkOpen ? (
-          <div className="advancedBox">
-            <p className="muted">Các thao tác hàng loạt chỉ dùng khi cần rà soát nhanh dữ liệu đã trích xuất.</p>
-            <button
-              type="button"
-              onClick={() => {
-                if (window.confirm("Thao tác này sẽ lưu toàn bộ topic lên MongoDB/MinIO. Tiếp tục?")) onApproveAll?.();
-              }}
-              disabled={loading || approving || approved}
-            >
-              Duyệt tất cả topic
+        {safeTopics.length > 0 ? (
+          <div className="topicHeaderActions">
+            <button type="button" className="secondary-action" onClick={onExtract} disabled={loading || approving}>
+              Trích xuất lại
             </button>
-            <button type="button" className="linkButton" onClick={() => setAdvancedOpen((value) => !value)}>
-              {advancedOpen ? "Ẩn chỉnh sửa nâng cao" : "Chỉnh sửa nâng cao"}
-            </button>
+            <button type="button" className="secondary-action" onClick={onLoad} disabled={loading || approving}>Tải lại</button>
           </div>
         ) : null}
       </div>
 
-      {advancedOpen ? <AdvancedTopicTable topics={safeTopics} onChange={onChange} disabled={loading || approving} /> : null}
+      {localMessage ? <div className="successBanner compactBanner">{localMessage}</div> : null}
+      {localError ? <ErrorState message={localError} /> : null}
+      {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
+
+      {isExtracting && safeTopics.length === 0 ? (
+        <ProcessingState
+          title="Đang trích xuất chủ đề"
+          message="Hệ thống đang phân tích sách giáo khoa và chuẩn bị dữ liệu duyệt chủ đề."
+          detail="Bạn có thể mở Debug nếu muốn xem log chi tiết."
+          status={status}
+        />
+      ) : null}
+
+      {!isExtracting && safeTopics.length === 0 ? (
+        <TopicEmptyOnboarding onExtract={onExtract} loading={loading || approving} />
+      ) : null}
+
+      {safeTopics.length > 0 ? (
+        <>
+          <div className="summaryCards">
+            <div className="summaryCard"><span>Tổng chủ đề</span><strong>{safeTopics.length}</strong></div>
+            <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}</strong></div>
+            <div className="summaryCard"><span>Chưa duyệt</span><strong>{pendingCount}</strong></div>
+          </div>
+          <div className="review-workspace topicReviewLayout">
+            <TopicList topics={safeTopics} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
+            <SplitPdfReview
+              title="Sách gốc → PDF chủ đề → Metadata"
+              description="Sách giáo khoa gốc ở bên trái, kết quả trích xuất của topic đang chọn ở bên phải."
+              sourcePreviewUrl={sourcePreviewUrl}
+              extractedPreviewUrl={extractedPreviewUrl}
+              sourceLabel="Sách giáo khoa gốc"
+              extractedLabel="Topic đã trích xuất"
+              sourcePageHint="Bản PDF nguồn của phiên duyệt"
+              extractedPageHint={selectedTopic ? `Topic ${pad2(selectedTopic.topic_num)} · Trang ${selectedTopic.start || "-"}-${selectedTopic.end || "-"}` : ""}
+              extractedStatusBadge={<span className={`status-chip ${topicStatus(selectedTopic).tone}`}>{topicStatus(selectedTopic).label}</span>}
+              missingExtractedMessage={
+                selectedTopic
+                  ? "Chưa có PDF chủ đề"
+                  : previewError || "Chưa có PDF chủ đề"
+              }
+              missingExtractedDetail={
+                previewInfo?.topics_extracted === false
+                  ? "Hãy trích xuất chủ đề trước. Nếu đã trích xuất, kiểm tra Debug để xem đường dẫn preview."
+                  : "Hãy trích xuất chủ đề trước. Nếu đã trích xuất, kiểm tra Debug để xem đường dẫn preview."
+              }
+            >
+              {previewLoading ? <LoadingState message="Đang tải thông tin preview..." /> : null}
+              <TopicEditorCard
+                topic={selectedTopic}
+                loading={loading || approving}
+                onUpdate={updateSelected}
+                onSave={onSave}
+                onApprove={approveSelected}
+                onExtractLessons={onExtractLessonsForTopic}
+              />
+            </SplitPdfReview>
+          </div>
+        </>
+      ) : null}
+
+      {safeTopics.length > 0 ? (
+        <>
+          <div className="advancedActions subtleAdvanced">
+            <button type="button" className="linkButton" onClick={() => setBulkOpen((value) => !value)}>
+              {bulkOpen ? "Ẩn nâng cao" : "Nâng cao"}
+            </button>
+            {bulkOpen ? (
+              <div className="advancedBox">
+                <p className="muted">Các thao tác hàng loạt chỉ dùng khi cần rà soát nhanh dữ liệu đã trích xuất.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm("Thao tác này sẽ lưu toàn bộ topic lên MongoDB/MinIO. Tiếp tục?")) onApproveAll?.();
+                  }}
+                  disabled={loading || approving || approved}
+                >
+                  Duyệt tất cả topic
+                </button>
+                <button type="button" className="linkButton" onClick={() => setAdvancedOpen((value) => !value)}>
+                  {advancedOpen ? "Ẩn chỉnh sửa nâng cao" : "Chỉnh sửa nâng cao"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {advancedOpen ? <AdvancedTopicTable topics={safeTopics} onChange={onChange} disabled={loading || approving} /> : null}
+        </>
+      ) : null}
 
       <div className="wizardNav">
         <button type="button" onClick={onBack}>Quay lại</button>
-        <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục bài học</button>
+        {safeTopics.length > 0 && approvedCount > 0 ? (
+          <button type="button" className="primaryButton" onClick={onNext}>Sang bài học</button>
+        ) : safeTopics.length > 0 ? (
+          <span className="inlineHelper">Bạn cần duyệt ít nhất một chủ đề trước khi sang bước bài học.</span>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function friendlyTopicProgress(status) {
+  const stage = String(status?.stage || "").toLowerCase();
+  const message = String(status?.message || "");
+  if (stage.includes("split") || message.toLowerCase().includes("pdf")) return "Đang cắt PDF theo chủ đề...";
+  if (stage.includes("gemini") || message.toLowerCase().includes("gemini")) return "Đang trích xuất danh sách chủ đề...";
+  if (/key index|waiting_|gemini key/i.test(message)) return "Đang phân tích sách bằng Gemini...";
+  return message || "Đang chuẩn bị dữ liệu duyệt...";
+}
+
+function ProcessingState({ title, message, detail, status }) {
+  const rawPercent = Number(status?.percent);
+  const hasPercent = Number.isFinite(rawPercent) && rawPercent > 0;
+  const percent = Math.max(0, Math.min(rawPercent || 0, 100));
+  return (
+    <section className="processingState">
+      <div className="processingIcon" aria-hidden="true" />
+      <div>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <strong>{friendlyTopicProgress(status)}</strong>
+        <div className={`progressTrack ${hasPercent ? "" : "indeterminate"}`}>
+          <div className="progressFill" style={{ width: hasPercent ? `${percent}%` : "42%" }} />
+        </div>
+        <ol className="processList">
+          <li className="done">Tải sách lên MinIO</li>
+          <li className="active">Gọi Gemini phân tích cấu trúc</li>
+          <li>Cắt PDF chủ đề</li>
+          <li>Chuẩn bị màn hình duyệt</li>
+        </ol>
+        <small>{detail}</small>
+      </div>
+    </section>
+  );
+}
+
+function TopicEmptyOnboarding({ onExtract, loading }) {
+  return (
+    <section className="topicOnboarding">
+      <div className="onboardingVisual" aria-hidden="true">
+        <span>PDF</span>
+        <i />
+        <strong>AI</strong>
+        <i />
+        <span>Review</span>
+      </div>
+      <div className="onboardingCopy">
+        <span className="stepLabel">Bắt đầu duyệt</span>
+        <h3>Chưa có dữ liệu chủ đề</h3>
+        <p>Hệ thống cần trích xuất danh sách chủ đề từ sách giáo khoa trước khi duyệt.</p>
+        <div className="onboardingSteps">
+          <div><strong>1</strong><span>Gọi Gemini phân tích sách</span></div>
+          <div><strong>2</strong><span>Cắt PDF theo từng chủ đề</span></div>
+          <div><strong>3</strong><span>Hiển thị preview để duyệt</span></div>
+        </div>
+        <button type="button" className="primaryButton primary-action" onClick={onExtract} disabled={loading}>Trích xuất chủ đề</button>
+        <small>Sau khi trích xuất, bạn sẽ thấy danh sách chủ đề và preview PDF để đối chiếu.</small>
       </div>
     </section>
   );
@@ -206,9 +300,9 @@ export default function TopicReviewView({
 
 function TopicList({ topics, selectedIndex, onSelect }) {
   return (
-    <nav className="compact-topic-nav">
+    <nav className="review-navigator compact-topic-nav">
       <div className="cardHeaderCompact">
-        <h3>Topic Navigator</h3>
+        <h3>Danh sách chủ đề</h3>
         <span>{topics.length} topic</span>
       </div>
       <div className="compactNavScroller">
@@ -217,7 +311,7 @@ function TopicList({ topics, selectedIndex, onSelect }) {
           return (
             <button
               type="button"
-              className={`compact-nav-item ${index === selectedIndex ? "active" : ""}`}
+              className={`review-list-item compact-nav-item ${index === selectedIndex ? "review-list-item-active active" : ""}`}
               key={topic.name || `${topic.topic_num}-${index}`}
               onClick={() => onSelect(index)}
             >
@@ -235,59 +329,6 @@ function TopicList({ topics, selectedIndex, onSelect }) {
   );
 }
 
-function TopicPreviewPanel({ topic, previewInfo, previewUrl, loading, frameLoading, error, onFrameLoad, onRetry }) {
-  const assetPreviewUrl = previewInfo?.asset_object_key ? getAssetPreviewUrl(previewInfo.asset_object_key) : "";
-  const hasPreview = Boolean(previewUrl && (previewInfo?.local_preview_available || previewInfo?.asset_object_key));
-  const status = topicStatus(topic);
-  return (
-    <section className="topicPreviewPanel review-preview">
-      <div className="previewHeader">
-        <div>
-          <h3>Preview PDF</h3>
-          <p className="muted">{topic ? `Topic ${pad2(topic.topic_num)}: ${topic.topic_name || "-"}` : "Chưa chọn topic"}</p>
-        </div>
-        <span className={`inlineStatus ${topic?.approved ? "done" : "pending"}`}>
-          {topic?.approved ? "Đã lưu MinIO/MongoDB" : "Preview qua backend"}
-        </span>
-      </div>
-
-      {topic ? (
-        <div className="previewMetaLine">
-          <span>Trang {topic.start || "-"}-{topic.end || "-"}</span>
-          <span>{status.label}</span>
-          {previewInfo?.asset_object_key ? <span className="mono truncate">MinIO: {previewInfo.asset_object_key}</span> : null}
-        </div>
-      ) : null}
-      {previewInfo?.asset_object_key ? (
-        <div className="backendPreviewNotice">
-          <span>Bucket MinIO đang private. Hệ thống sẽ hiển thị file thông qua backend preview.</span>
-          <button type="button" onClick={() => window.open(assetPreviewUrl, "_blank", "noopener,noreferrer")}>Xem qua backend</button>
-        </div>
-      ) : null}
-
-      {loading ? <LoadingState message="Đang tải preview..." /> : null}
-      {!loading && error ? (
-        <div className="previewMissing">
-          <EmptyState message="Chưa tìm thấy file PDF preview cho chủ đề này." />
-          <button type="button" onClick={onRetry}>Tải lại preview</button>
-        </div>
-      ) : null}
-      {!loading && !error && hasPreview ? (
-        <div className="previewFrameWrap">
-          {frameLoading ? <div className="previewLoadingOverlay">Đang tải preview...</div> : null}
-          <iframe className="topicPreviewFrame" src={previewUrl} title={`Preview topic ${topic?.topic_num}`} onLoad={onFrameLoad} />
-        </div>
-      ) : null}
-      {!loading && !error && !hasPreview ? (
-        <div className="previewMissing">
-          <EmptyState message="Chưa tìm thấy file PDF preview cho chủ đề này." />
-          <button type="button" onClick={onRetry}>Tải lại preview</button>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function TopicEditorCard({ topic, loading, onUpdate, onSave, onApprove, onExtractLessons }) {
   if (!topic) return null;
   return (
@@ -298,7 +339,7 @@ function TopicEditorCard({ topic, loading, onUpdate, onSave, onApprove, onExtrac
       </div>
       <div className="topicEditorGrid">
         <label>
-          <span>Topic number</span>
+          <span>Số topic</span>
           <input type="number" value={topic.topic_num ?? ""} disabled={topic.approved} onChange={(event) => onUpdate("topic_num", Number(event.target.value))} />
         </label>
         <label className="wide">
@@ -314,22 +355,6 @@ function TopicEditorCard({ topic, loading, onUpdate, onSave, onApprove, onExtrac
           <input type="number" value={topic.end ?? ""} disabled={topic.approved} onChange={(event) => onUpdate("end", Number(event.target.value))} />
         </label>
       </div>
-      {topic.asset_object_key ? (
-        <details className="minioDetails">
-          <summary>Thông tin MinIO</summary>
-          <p className="mono breakText">{topic.asset_object_key}</p>
-          <button type="button" onClick={() => window.open(getAssetPreviewUrl(topic.asset_object_key), "_blank", "noopener,noreferrer")}>
-            Xem qua backend
-          </button>
-          {topic.asset_url ? (
-            <details className="advancedMinioUrl">
-              <summary>Nâng cao</summary>
-              <p className="muted">URL MinIO trực tiếp có thể bị AccessDenied vì bucket đang private.</p>
-              <p className="mono breakText">{topic.asset_url}</p>
-            </details>
-          ) : null}
-        </details>
-      ) : null}
       {topic.metadata_edu_saved || topic.minio_uploaded ? (
         <div className="successBox">Đã lưu Topic vào MongoDB và MinIO.</div>
       ) : null}

@@ -191,6 +191,14 @@ export function approveChunks(jobId, chunks) {
   });
 }
 
+export function approveChunkIds(jobId, chunkIds) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/chunks/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chunk_ids: chunkIds }),
+  });
+}
+
 export function approveChunk(jobId, chunkId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/chunks/${encodeURIComponent(chunkId)}/approve`, { method: "POST" });
 }

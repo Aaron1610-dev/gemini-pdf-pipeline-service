@@ -5,7 +5,6 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from pypdf import PdfReader
 
@@ -113,90 +112,131 @@ def _topics_from_partial(job_id: str) -> list[dict[str, Any]]:
     return [_normalize_topic_for_api(dict(topic), index) for index, topic in enumerate(topics) if isinstance(topic, dict)]
 
 
-def _topic_pdf_candidates(job_id: str, topic_num: Any, checked_paths: list[str] | None = None) -> list[Path]:
+def _topic_preview_search(job_id: str, topic_num: Any) -> dict[str, Any]:
     state_path = _workspace_file(job_id, "extraction_state.json")
-    if not state_path.exists():
-        if checked_paths is not None:
-            checked_paths.append(str(state_path))
-        return []
-    state = read_json(state_path)
+    state = read_json(state_path) if state_path.exists() else {}
     book_stem = state.get("book_stem") or ""
     roots: list[Path] = []
     for key in ["bundle_path", "rebuilt_bundle_path", "final_bundle_path"]:
         value = state.get(key)
         if value:
             roots.append(Path(value))
+    roots.append(job_workspace(job_id))
     if book_stem:
         roots.append(job_workspace(job_id) / book_stem)
         roots.append(output_root() / book_stem)
+    roots.append(output_root())
 
     topic_id = f"topic_{_pad2(topic_num)}"
-    candidates: list[Path] = []
+    checked_paths: list[str] = [str(state_path)]
+    direct_candidates: list[Path] = []
+    named_candidates: list[Path] = []
+    meta_candidates: list[Path] = []
     for root in roots:
-        topic_root = root / "Topic"
-        direct = topic_root / topic_id
-        if checked_paths is not None:
+        checked_paths.append(str(root))
+        topic_roots = [root / "Topic"]
+        if root.name == "Topic":
+            topic_roots.append(root)
+        for topic_root in topic_roots:
+            direct = topic_root / topic_id
             checked_paths.extend([str(direct), str(topic_root / f"**/*{topic_id}*.pdf")])
-        if direct.exists():
-            candidates.extend(sorted(direct.glob("*.pdf")))
-        if topic_root.exists():
-            candidates.extend(sorted(topic_root.glob(f"**/*{topic_id}*.pdf")))
-            for meta_path in sorted(topic_root.glob("**/*.json")):
+            if direct.exists():
+                direct_candidates.extend(sorted(direct.glob("*.pdf")))
+            if not topic_root.exists():
+                continue
+            named_candidates.extend(sorted(topic_root.glob(f"**/*{topic_id}*.pdf")))
+            for meta_path in sorted(topic_root.rglob("*.json")):
                 try:
                     meta = read_json(meta_path)
                 except Exception:
                     continue
                 if _topic_num_int(meta.get("topic_num")) == _topic_num_int(topic_num):
-                    candidates.extend(sorted(meta_path.parent.glob("*.pdf")))
+                    meta_candidates.extend(sorted(meta_path.parent.glob("*.pdf")))
 
     seen: set[Path] = set()
     unique: list[Path] = []
-    for path in candidates:
+    for path in [*direct_candidates, *named_candidates, *meta_candidates]:
         resolved = path.resolve()
         if path.exists() and resolved not in seen:
             seen.add(resolved)
             unique.append(path)
-    return unique
+    return {
+        "book_stem": book_stem,
+        "checked_paths": checked_paths[:80],
+        "pdf_candidates": [str(path) for path in unique[:80]],
+        "candidates": unique,
+        "extraction_state_exists": state_path.exists(),
+    }
+
+
+def _topic_pdf_candidates(job_id: str, topic_num: Any, checked_paths: list[str] | None = None) -> list[Path]:
+    result = _topic_preview_search(job_id, topic_num)
+    if checked_paths is not None:
+        checked_paths.extend(result["checked_paths"])
+    return result["candidates"]
 
 
 def find_topic_preview_pdf(job_id: str, topic_num: Any) -> Path:
     ensure_job_exists(job_id)
-    checked_paths: list[str] = []
-    candidates = _topic_pdf_candidates(job_id, topic_num, checked_paths)
+    result = _topic_preview_search(job_id, topic_num)
+    candidates = result["candidates"]
     if not candidates:
-        raise FileNotFoundError(f"No preview PDF found for topic_{_pad2(topic_num)}. Checked: {checked_paths[:12]}")
+        raise FileNotFoundError(f"Không tìm thấy file PDF preview cho Topic {_pad2(topic_num)}.")
     return candidates[0]
 
 
 def topic_preview_info(job_id: str, topic_num: Any) -> dict[str, Any]:
     ensure_job_exists(job_id)
-    topic = next((item for item in read_topics(job_id)["topics"] if _topic_num_int(item.get("topic_num")) == _topic_num_int(topic_num)), None)
-    if topic is None:
-        raise FileNotFoundError(f"Topic {topic_num} not found.")
-    checked_paths: list[str] = []
-    candidates = _topic_pdf_candidates(job_id, topic_num, checked_paths)
+
+    # Try to read topics — if extraction hasn't run yet, fall back to a synthetic placeholder.
+    topic: dict[str, Any] = {}
+    topics_available = False
+    try:
+        topics_data = read_topics(job_id)
+        matched = next(
+            (item for item in topics_data.get("topics", []) if _topic_num_int(item.get("topic_num")) == _topic_num_int(topic_num)),
+            None,
+        )
+        if matched is not None:
+            topic = matched
+            topics_available = True
+    except FileNotFoundError:
+        # topics_partial.json not yet written — extraction not run or failed
+        pass
+
+    search = _topic_preview_search(job_id, topic_num)
+    candidates = search["candidates"]
     local_available = bool(candidates)
     asset_object_key = topic.get("asset_object_key")
-    payload = {
+
+    payload: dict[str, Any] = {
         "ok": True,
         "job_id": job_id,
-        "topic_num": topic.get("topic_num"),
-        "topic_name": topic.get("topic_name"),
+        "topic_num": topic.get("topic_num") or topic_num,
+        "topic_name": topic.get("topic_name") or f"Topic {_pad2(topic_num)}",
+        "topics_extracted": topics_available,
         "local_preview_available": local_available,
         "local_preview_url": f"/api/jobs/{job_id}/topics/{topic_num}/preview" if local_available else None,
         "local_preview_path": str(candidates[0]) if local_available else None,
         "minio_available": bool(topic.get("asset_url") or asset_object_key),
         "asset_url": topic.get("asset_url"),
         "direct_minio_url": topic.get("asset_url"),
-        "backend_preview_url": f"/api/assets/preview?object_key={quote(asset_object_key, safe='')}" if asset_object_key else None,
+        "backend_preview_url": f"/api/jobs/{job_id}/topics/{topic_num}/preview",
+        "source_preview_url": f"/api/jobs/{job_id}/source/preview",
         "asset_object_key": asset_object_key,
         "object_key": asset_object_key,
         "approved": bool(topic.get("approved")),
         "metadata_edu_saved": bool(topic.get("metadata_edu_saved")),
         "minio_uploaded": bool(topic.get("minio_uploaded")),
+        "debug": {
+            "book_stem": search["book_stem"],
+            "extraction_state_exists": search["extraction_state_exists"],
+            "checked_paths": search["checked_paths"][:30],
+            "pdf_candidates": search["pdf_candidates"][:30],
+        },
     }
     if not local_available:
-        payload["checked_paths"] = checked_paths[:20]
+        payload["checked_paths"] = search["checked_paths"][:20]
     return payload
 
 

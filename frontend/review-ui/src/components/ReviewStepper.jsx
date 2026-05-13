@@ -27,7 +27,7 @@ export default function ReviewStepper({ status, activeStep = "upload", onStepCha
         return (
           <li key={step.key} className={`stepItem ${state}`}>
             <button type="button" className="stepButton" onClick={() => onStepChange?.(step.key)}>
-            <span className="stepDot">{index + 1}</span>
+            <span className="stepDot">{state === "done" ? "✓" : index + 1}</span>
             <span className="stepText">
               <strong>{step.label}</strong>
             </span>

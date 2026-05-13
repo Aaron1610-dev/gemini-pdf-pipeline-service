@@ -1,11 +1,11 @@
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from app.api.routes_assets import asset_head_response, validate_object_key, _stream_minio_object
 from app.core.config import get_settings
-from app.core.paths import job_source_pdf_path, job_state_path
+from app.core.paths import job_config_path, job_result_path, job_source_pdf_path, job_state_path
 from app.services.job_service import create_job, debug_job_files, get_job, get_status, list_jobs
 from app.utils.files import read_json
 
@@ -64,11 +64,53 @@ def _source_minio_key(job_id: str) -> str | None:
     return minio.get("subject_object_key")
 
 
+def _source_bucket(job: dict) -> str:
+    return ((job.get("minio") or {}).get("bucket")) or get_settings().minio_bucket
+
+
+def _source_candidates(job_id: str, job: dict) -> list[Path]:
+    candidates = [job_source_pdf_path(job_id)]
+    if job.get("source_pdf_path"):
+        candidates.append(Path(job["source_pdf_path"]))
+    if job_config_path(job_id).exists():
+        config = read_json(job_config_path(job_id))
+        if config.get("source_pdf_path"):
+            candidates.append(Path(config["source_pdf_path"]))
+    if job_result_path(job_id).exists():
+        result = read_json(job_result_path(job_id))
+        data = result.get("data") or {}
+        for key in ["source_pdf_path", "source_pdf"]:
+            if data.get(key):
+                candidates.append(Path(data[key]))
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(path)
+    return unique
+
+
+def _source_missing_response(job_id: str, checked: list[str], status_code: int = status.HTTP_404_NOT_FOUND) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": False,
+            "job_id": job_id,
+            "message": "Không tìm thấy file sách gốc cho job này.",
+            "checked": checked,
+        },
+    )
+
+
 def _source_preview_response(job_id: str):
     job = get_job(job_id)
-    local_pdf = job_source_pdf_path(job_id)
-    source_path = Path(job.get("source_pdf_path") or local_pdf)
-    if source_path.exists():
+    checked: list[str] = []
+    for source_path in _source_candidates(job_id, job):
+        checked.append(str(source_path))
+        if not source_path.exists():
+            continue
         return FileResponse(
             path=source_path,
             media_type="application/pdf",
@@ -78,14 +120,16 @@ def _source_preview_response(job_id: str):
 
     object_key = _source_minio_key(job_id)
     if object_key:
-        safe_key = validate_object_key(object_key)
-        bucket = ((job.get("minio") or {}).get("bucket")) or None
-        return _stream_minio_object(bucket or get_settings().minio_bucket, safe_key)
+        checked.append(f"{_source_bucket(job)}/{object_key}")
+        try:
+            safe_key = validate_object_key(object_key)
+            return _stream_minio_object(_source_bucket(job), safe_key)
+        except HTTPException:
+            raise
+        except Exception:
+            return _source_missing_response(job_id, checked)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Source PDF not found for job {job_id}.",
-    )
+    return _source_missing_response(job_id, checked)
 
 
 @router.get("/{job_id}/source/preview")
@@ -96,9 +140,11 @@ def preview_source_pdf(job_id: str):
 @router.head("/{job_id}/source/preview")
 def head_source_pdf(job_id: str):
     job = get_job(job_id)
-    local_pdf = job_source_pdf_path(job_id)
-    source_path = Path(job.get("source_pdf_path") or local_pdf)
-    if source_path.exists():
+    checked: list[str] = []
+    for source_path in _source_candidates(job_id, job):
+        checked.append(str(source_path))
+        if not source_path.exists():
+            continue
         return Response(
             status_code=status.HTTP_200_OK,
             headers={
@@ -110,9 +156,5 @@ def head_source_pdf(job_id: str):
     object_key = _source_minio_key(job_id)
     if object_key:
         safe_key = validate_object_key(object_key)
-        bucket = ((job.get("minio") or {}).get("bucket")) or get_settings().minio_bucket
-        return asset_head_response(bucket, safe_key)
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Source PDF not found for job {job_id}.",
-    )
+        return asset_head_response(_source_bucket(job), safe_key)
+    return _source_missing_response(job_id, checked)

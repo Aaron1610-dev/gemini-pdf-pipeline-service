@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
@@ -141,6 +142,36 @@ def head_chunk_pdf(job_id: str, chunk_id: str):
             safe_key = validate_object_key(object_key)
             return asset_head_response(get_settings().minio_bucket, safe_key)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{job_id}/chunks/{chunk_id}/preview-info")
+def get_chunk_preview_info(job_id: str, chunk_id: str):
+    try:
+        chunks = read_chunks(job_id).get("chunks", [])
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    chunk = next((item for item in chunks if str(item.get("chunk_id") or item.get("id")) == str(chunk_id)), None)
+    if chunk is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Chunk not found: {chunk_id}")
+    local_available = True
+    try:
+        find_chunk_preview_pdf(job_id, chunk_id)
+    except FileNotFoundError:
+        local_available = False
+    status_value = "waiting_for_kaggle" if chunk.get("waiting_for_kaggle") else "approved" if chunk.get("approved") else "pending"
+    if chunk.get("kaggle_finalized"):
+        status_value = "kaggle_finalized"
+    if chunk.get("metadata_edu_saved") and chunk.get("minio_uploaded"):
+        status_value = "saved"
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "chunk_id": chunk_id,
+        "chunk_num": chunk.get("chunk_num"),
+        "local_preview_available": local_available,
+        "backend_preview_url": f"/api/jobs/{job_id}/chunks/{quote(chunk_id, safe='')}/preview",
+        "status": status_value,
+    }
 
 
 @router.post("/{job_id}/chunks/add")

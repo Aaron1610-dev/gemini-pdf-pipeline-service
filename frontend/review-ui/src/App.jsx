@@ -3,6 +3,7 @@ import {
   API_BASE_URL,
   addChunk,
   approveChunk,
+  approveChunkIds,
   approveChunks,
   approveLesson,
   approveLessons,
@@ -61,6 +62,24 @@ const BUSY_STATUSES = new Set([
   "importing_mongodb",
 ]);
 
+function friendlyProgress(status, fallback = "Đang xử lý dữ liệu...") {
+  const stage = String(status?.stage || "").toLowerCase();
+  const message = String(status?.message || "");
+  if (stage.includes("topic") || status?.status === "extracting_topics") {
+    if (stage.includes("split") || message.toLowerCase().includes("pdf")) return "Đang cắt PDF theo chủ đề...";
+    if (stage.includes("gemini") || message.toLowerCase().includes("gemini")) return "Đang trích xuất danh sách chủ đề...";
+    return "Đang phân tích sách bằng Gemini...";
+  }
+  if (stage.includes("lesson") || status?.status === "extracting_lessons") return "Đang trích xuất danh sách bài học...";
+  if (stage.includes("chunk") || status?.status === "extracting_chunks") return "Đang trích xuất chunk bằng Gemini...";
+  if (stage.includes("bundle") || status?.status === "preparing_bundle") return "Đang chuẩn bị dữ liệu hoàn tất...";
+  if (stage.includes("kaggle") || status?.status === "running_kaggle") return "Đang xử lý Kaggle OCR/cutline...";
+  if (stage.includes("keyword") || status?.status === "extracting_keywords") return "Đang trích xuất keyword...";
+  if (stage.includes("mongo") || status?.status === "importing_mongodb") return "Đang lưu metadata vào MongoDB...";
+  if (/key index|waiting_|gemini key/i.test(message)) return fallback;
+  return message || fallback;
+}
+
 export default function App() {
   const [healthInfo, setHealthInfo] = useState(null);
   const [healthError, setHealthError] = useState("");
@@ -72,6 +91,7 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
+  const [navWarning, setNavWarning] = useState("");
   const [activeStep, setActiveStep] = useState(WORKFLOW_STEPS.upload);
   const [topics, setTopics] = useState(null);
   const [topicsApproved, setTopicsApproved] = useState(false);
@@ -180,6 +200,7 @@ export default function App() {
   async function loadSelectedJob(jobId, options = {}) {
     setDetailsLoading(true);
     setDetailsError("");
+    setNavWarning("");
     if (!options.keepMessage) setSuccessMessage("");
     if (!options.keepResults) {
       setBundleResult(null);
@@ -234,12 +255,14 @@ export default function App() {
     const { success, reload } = options;
     if (!selectedJobId) return;
     setActionLoading(true);
+    setDetailsError("");
+    setNavWarning("");
     setSuccessMessage(options.loadingMessage || "");
     try {
       const result = await action();
       if (success) setSuccessMessage(success);
       await Promise.all([loadJobs(false), loadSelectedJob(selectedJobId, { keepMessage: true, keepReview: true, keepResults: true, keepStep: true })]);
-      if (BUSY_STATUSES.has(result?.status) || BUSY_STATUSES.has(status?.status)) startPolling();
+      if (options.poll !== false && (BUSY_STATUSES.has(result?.status) || BUSY_STATUSES.has(status?.status))) startPolling();
       if (reload) await reload(result);
       return result;
     } catch (err) {
@@ -427,34 +450,48 @@ export default function App() {
     mongoResult,
     minio: job?.minio,
   };
+  const approvedChunkCount = Array.isArray(chunks)
+    ? chunks.filter((chunk) => chunk?.approved || chunk?.waiting_for_kaggle || chunk?.kaggle_finalized || chunk?.metadata_edu_saved).length
+    : 0;
+  const approvedTopicCount = Array.isArray(topics)
+    ? topics.filter((topic) => topic?.approved || topic?.metadata_edu_saved || topic?.minio_uploaded).length
+    : 0;
+  const approvedLessonCount = Array.isArray(lessons)
+    ? lessons.filter((lesson) => lesson?.approved || lesson?.metadata_edu_saved || lesson?.minio_uploaded).length
+    : 0;
+  const hasApprovedChunks = approvedChunkCount > 0;
+  const hasApprovedTopics = approvedTopicCount > 0;
+  const hasApprovedLessons = approvedLessonCount > 0;
 
   function goBack() {
     const order = Object.values(WORKFLOW_STEPS);
     const index = order.indexOf(activeStep);
     setDetailsError("");
+    setNavWarning("");
     setActiveStep(order[Math.max(0, index - 1)]);
   }
 
   function goNext() {
     setDetailsError("");
+    setNavWarning("");
     if (activeStep === WORKFLOW_STEPS.upload) {
       if (!selectedJobId) {
-        setDetailsError("Bạn cần chọn hoặc tạo job trước khi tiếp tục.");
+        setNavWarning("Bạn cần chọn hoặc tạo job trước khi tiếp tục.");
         return;
       }
       setActiveStep(WORKFLOW_STEPS.topics);
       return;
     }
-    if (activeStep === WORKFLOW_STEPS.topics && !topicsApproved) {
-      setDetailsError("Bạn cần trích xuất và duyệt dữ liệu ở bước này trước khi tiếp tục.");
+    if (activeStep === WORKFLOW_STEPS.topics && !hasApprovedTopics) {
+      setNavWarning("Bạn cần duyệt ít nhất một chủ đề trước khi sang bước bài học.");
       return;
     }
-    if (activeStep === WORKFLOW_STEPS.lessons && !lessonsApproved) {
-      setDetailsError("Bạn cần trích xuất và duyệt dữ liệu ở bước này trước khi tiếp tục.");
+    if (activeStep === WORKFLOW_STEPS.lessons && !hasApprovedLessons) {
+      setNavWarning("Bạn cần duyệt ít nhất một bài học trước khi sang bước chunk.");
       return;
     }
-    if (activeStep === WORKFLOW_STEPS.chunks && !chunksApproved) {
-      setDetailsError("Bạn cần trích xuất và duyệt dữ liệu ở bước này trước khi tiếp tục.");
+    if (activeStep === WORKFLOW_STEPS.chunks && !hasApprovedChunks) {
+      setNavWarning("Bạn cần duyệt ít nhất một chunk trước khi chạy Kaggle.");
       return;
     }
     const order = Object.values(WORKFLOW_STEPS);
@@ -464,20 +501,26 @@ export default function App() {
 
   function canEnterStep(step) {
     if (step === WORKFLOW_STEPS.upload || step === WORKFLOW_STEPS.topics) return true;
-    if (step === WORKFLOW_STEPS.lessons) return topicsApproved || Array.isArray(lessons);
-    if (step === WORKFLOW_STEPS.chunks) return lessonsApproved || Array.isArray(chunks);
-    if (step === WORKFLOW_STEPS.bundle) return chunksApproved || Boolean(bundleResult || mongoResult);
+    if (step === WORKFLOW_STEPS.lessons) return hasApprovedTopics || Array.isArray(lessons);
+    if (step === WORKFLOW_STEPS.chunks) return hasApprovedLessons || Array.isArray(chunks);
+    if (step === WORKFLOW_STEPS.bundle) return hasApprovedChunks || Boolean(bundleResult || mongoResult);
     return false;
   }
 
   function changeStep(step) {
     setDetailsError("");
+    setNavWarning("");
     if (!selectedJobId && step !== WORKFLOW_STEPS.upload) {
-      setDetailsError("Bạn cần chọn hoặc tạo một phiên duyệt trước khi tiếp tục.");
+      setNavWarning("Bạn cần chọn hoặc tạo một phiên duyệt trước khi tiếp tục.");
       return;
     }
     if (!canEnterStep(step)) {
-      setDetailsError("Bạn cần duyệt bước hiện tại trước khi tiếp tục.");
+      const messageByStep = {
+        lessons: "Bạn cần duyệt ít nhất một chủ đề trước khi sang bước bài học.",
+        chunks: "Bạn cần duyệt ít nhất một bài học trước khi sang bước chunk.",
+        bundle: "Bạn cần duyệt ít nhất một chunk trước khi chạy Kaggle.",
+      };
+      setNavWarning(messageByStep[step] || "Bạn cần duyệt bước hiện tại trước khi tiếp tục.");
       return;
     }
     setActiveStep(step);
@@ -487,8 +530,9 @@ export default function App() {
     <div className="appShell review-shell">
       <header className="topBar review-header">
         <div className="brandBlock review-brand">
+          <span className="brandEyebrow">KLTN Review System</span>
           <h1>AI Tra Cứu</h1>
-          <p>Duyệt cấu trúc sách giáo khoa theo Topic → Lesson → Chunk</p>
+          <p>Duyệt và chuẩn hoá cấu trúc sách giáo khoa bằng AI</p>
         </div>
         <div className="headerStepper">
           <ReviewStepper status={selectedStatus} activeStep={activeStep} onStepChange={changeStep} />
@@ -506,7 +550,7 @@ export default function App() {
 
       {healthError ? <div className="warningBox">{healthError}</div> : null}
       {successMessage ? <div className="successBanner">{successMessage}</div> : null}
-      {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang trích xuất, vui lòng chờ..." /> : null}
+      {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang xử lý dữ liệu..." /> : null}
 
       <main className="focusShell review-main">
         {!selectedJobId || activeStep === WORKFLOW_STEPS.upload ? (
@@ -523,22 +567,32 @@ export default function App() {
             </div>
           </section>
         ) : (
-          <div className="focusToolbar currentReviewBar">
-            <button type="button" className="secondary-action" onClick={() => setActiveStep(WORKFLOW_STEPS.upload)}>Đổi sách</button>
+          <div className="currentReviewBar bookContextBar">
             {job ? (
               <div className="book-summary-card">
-                <div className="source-book-thumbnail" aria-label="Sách gốc">
-                  <iframe src={getSourcePreviewUrl(selectedJobId)} title="Sách gốc" />
+                <div className="source-book-thumbnail pdfCoverPlaceholder" aria-label="Sách gốc">
+                  <span>PDF</span>
+                  <strong>Sách gốc</strong>
+                  <small>{job.book_name || "Tài liệu"}</small>
                 </div>
                 <div className="currentDocument">
                   <strong>{job.book_name || "Tài liệu chưa đặt tên"}</strong>
-                  <span>Section {job.class_name || "-"} · {job.subject_name || "-"} · {job.subject_type || "-"} · {shortJobId}</span>
+                  <div className="bookMetaChips">
+                    <span>Section {job.class_name || "-"}</span>
+                    <span>{job.subject_name || "-"}</span>
+                    <span>{job.subject_type || "-"}</span>
+                    <span>{shortJobId}</span>
+                    <em>{job?.minio?.subject_asset_uploaded ? "Đã tải MinIO" : BUSY_STATUSES.has(selectedStatus) ? "Đang xử lý" : "Chờ duyệt"}</em>
+                  </div>
                 </div>
               </div>
             ) : null}
-            <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
-              Xem sách gốc
-            </button>
+            <div className="bookContextActions">
+              <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
+                Xem sách gốc
+              </button>
+              <button type="button" className="secondary-action" onClick={() => setActiveStep(WORKFLOW_STEPS.upload)}>Đổi sách</button>
+            </div>
           </div>
         )}
 
@@ -549,6 +603,7 @@ export default function App() {
 
           {selectedJobId && detailsLoading ? <LoadingState message="Đang tải chi tiết job..." /> : null}
           {selectedJobId && detailsError ? <ErrorState message={detailsError} onRetry={() => loadSelectedJob(selectedJobId)} /> : null}
+          {selectedJobId && navWarning ? <div className="warningBox inlineNotice">{navWarning}</div> : null}
 
           {selectedJobId && job && !detailsLoading ? (
             <>
@@ -558,6 +613,8 @@ export default function App() {
                   topics={topics}
                   approved={topicsApproved}
                   loading={actionLoading}
+                  status={status}
+                  jobStatus={selectedStatus}
                   error={topicsError}
                   onChange={(index, field, value) => updateItem(setTopics, index, field, value)}
                   onLoad={loadTopics}
@@ -605,6 +662,8 @@ export default function App() {
                   selectedTopicNum={selectedTopicNum}
                   approved={lessonsApproved}
                   loading={actionLoading}
+                  status={status}
+                  jobStatus={selectedStatus}
                   error={lessonsError}
                   onChange={(index, field, value) => updateItem(setLessons, index, field, value)}
                   onLoad={loadLessons}
@@ -652,28 +711,40 @@ export default function App() {
                   groupedByLesson={groupedChunks}
                   approved={chunksApproved}
                   loading={actionLoading}
+                  status={status}
+                  jobStatus={selectedStatus}
                   error={chunksError}
                   onChange={(index, field, value) => updateItem(setChunks, index, field, value)}
                   onLoad={loadChunks}
                   onExtract={() => runAction(() => extractChunks(selectedJobId), {
-                    loadingMessage: "Đang trích xuất chunk...",
-                    success: "Đang trích xuất chunk.",
+                    loadingMessage: "Đang trích xuất chunk bằng Gemini...",
+                    success: "Đang trích xuất chunk bằng Gemini...",
                     reload: async () => startPolling(),
                     onError: setChunksError,
                   })}
                   onSave={() => runAction(() => saveChunks(selectedJobId, chunks || []), { success: "Đã lưu chỉnh sửa chunk.", reload: loadChunks, onError: setChunksError })}
-                  onApprove={() => runAction(() => approveChunks(selectedJobId, chunks || []), {
+                  onApprove={(chunkSubset) => runAction(() => approveChunks(selectedJobId, chunkSubset || chunks || []), {
                     success: "Đã duyệt chunk. Chunk sẽ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.",
                     reload: async () => {
                       await loadChunks();
                       setActiveStep(WORKFLOW_STEPS.bundle);
                     },
                     onError: setChunksError,
+                    poll: false,
                   })}
                   onApproveChunk={(chunk) => runAction(() => approveChunk(selectedJobId, chunk.chunk_id || chunk.id), {
+                    loadingMessage: "Đang đánh dấu duyệt chunk...",
                     success: "Chunk đã duyệt. Chunk sẽ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.",
                     reload: loadChunks,
                     onError: setChunksError,
+                    poll: false,
+                  })}
+                  onApproveChunkIds={(chunkIds) => runAction(() => approveChunkIds(selectedJobId, chunkIds), {
+                    loadingMessage: "Đang đánh dấu duyệt chunk...",
+                    success: "Đã duyệt các chunk trong bài. Các chunk này đang chờ Kaggle xử lý.",
+                    reload: loadChunks,
+                    onError: setChunksError,
+                    poll: false,
                   })}
                   onAdd={(payload) => runAction(() => addChunk(selectedJobId, payload), { success: "Đã thêm chunk.", reload: loadChunks, onError: setChunksError })}
                   onDelete={(chunkId) => runAction(() => deleteChunk(selectedJobId, chunkId), { success: "Đã xóa chunk.", reload: loadChunks, onError: setChunksError })}
@@ -745,12 +816,14 @@ function ProgressBanner({ status, fallback }) {
   const rawPercent = Number(status?.percent);
   const hasPercent = Number.isFinite(rawPercent) && rawPercent > 0;
   const percent = Math.max(0, Math.min(rawPercent || 0, 100));
+  const message = friendlyProgress(status, fallback);
 
   return (
     <section className="progressBanner">
+      <div className="progressSpinner" aria-hidden="true" />
       <div>
-        <strong>{status?.message || fallback}</strong>
-        <span>{status?.stage || "Đang xử lý"}</span>
+        <strong>Đang xử lý</strong>
+        <span>{message}</span>
       </div>
       <div className={`progressTrack ${hasPercent ? "" : "indeterminate"}`}>
         <div className="progressFill" style={{ width: hasPercent ? `${percent}%` : "42%" }} />

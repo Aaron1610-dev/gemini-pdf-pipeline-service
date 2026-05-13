@@ -73,7 +73,7 @@ export default function BookUploadForm({ onUploaded }) {
           <span className="fileDropIcon">PDF</span>
           <strong>{file ? file.name : "Chọn hoặc kéo thả file PDF"}</strong>
           <small>Sau khi tạo phiên, sách được lưu riêng tư và xem qua backend preview.</small>
-          <input type="file" accept="application/pdf,.pdf" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+          <input className="nativeFileInput" type="file" accept="application/pdf,.pdf" onChange={(event) => setFile(event.target.files?.[0] || null)} />
         </label>
         <label>
           <span>Tên tài liệu (tuỳ chọn)</span>

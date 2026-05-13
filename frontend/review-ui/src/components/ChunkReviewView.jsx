@@ -17,9 +17,10 @@ function groupsFrom(chunks, groupedByLesson) {
 }
 
 function chunkStatus(chunk) {
-  if (chunk?.metadata_edu_saved || chunk?.minio_uploaded) return { label: "Đã lưu MongoDB/MinIO", tone: "done" };
-  if (chunk?.kaggle_finalized) return { label: "Đã finalize sau Kaggle", tone: "done" };
-  if (chunk?.waiting_for_kaggle || chunk?.approved) return { label: "Đã duyệt, chờ Kaggle", tone: "warning" };
+  if (chunk?.error) return { label: "Lỗi", tone: "danger" };
+  if (chunk?.kaggle_finalized && chunk?.metadata_edu_saved && chunk?.minio_uploaded) return { label: "Đã lưu sau Kaggle", tone: "done" };
+  if (chunk?.kaggle_finalized) return { label: "Đã finalize", tone: "done" };
+  if (chunk?.waiting_for_kaggle || chunk?.approved) return { label: "Đã duyệt - Chờ Kaggle", tone: "warning" };
   return { label: "Chờ duyệt", tone: "pending" };
 }
 
@@ -34,6 +35,8 @@ export default function ChunkReviewView({
   groupedByLesson,
   approved,
   loading,
+  status,
+  jobStatus,
   error,
   onChange,
   onLoad,
@@ -41,6 +44,7 @@ export default function ChunkReviewView({
   onSave,
   onApprove,
   onApproveChunk,
+  onApproveChunkIds,
   onAdd,
   onDelete,
   onRecut,
@@ -60,6 +64,9 @@ export default function ChunkReviewView({
   const selectedChunkPreviewId = selectedChunk ? (selectedChunk.chunk_id || selectedChunk.id) : "";
   const sourcePreviewUrl = jobId ? getSourcePreviewUrl(jobId) : "";
   const chunkPreviewUrl = jobId && selectedChunkPreviewId ? getChunkPreviewUrl(jobId, selectedChunkPreviewId) : "";
+  const waitingCount = safeChunks.filter((chunk) => chunk.waiting_for_kaggle || (chunk.approved && !chunk.kaggle_finalized)).length;
+  const finalizedCount = safeChunks.filter((chunk) => chunk.kaggle_finalized || (chunk.metadata_edu_saved && chunk.minio_uploaded)).length;
+  const isExtracting = jobStatus === "extracting_chunks" || status?.status === "extracting_chunks";
 
   function chunkId(chunk, index) {
     return chunk.chunk_id || chunk.id || `${chunk.lesson_stem || "lesson"}:${chunk.chunk_num || index}`;
@@ -91,28 +98,46 @@ export default function ChunkReviewView({
         <div>
           <span className="stepLabel">Bước 4</span>
           <h2>Bước 4: Duyệt chunk</h2>
-          <p className="muted">Duyệt các chunk tạm. Chunk sẽ chỉ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.</p>
+          <p className="muted">Đối chiếu sách gốc với chunk được AI cắt ra. Chunk chỉ được lưu chính thức sau khi Kaggle xử lý.</p>
         </div>
         <div className="topicHeaderActions">
-          <button type="button" onClick={onExtract} disabled={loading}>Trích xuất chunk</button>
+          <button type="button" className={safeChunks.length ? "secondary-action" : "primaryButton"} onClick={onExtract} disabled={loading}>
+            {safeChunks.length ? "Trích xuất lại chunk" : "Trích xuất chunk"}
+          </button>
           <button type="button" className="secondary-action" onClick={onLoad} disabled={loading}>Tải lại</button>
         </div>
       </div>
-      <div className="summaryCards">
-        <div className="summaryCard"><span>Tổng chunk</span><strong>{safeChunks.length}</strong></div>
-        <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}/{safeChunks.length}</strong></div>
-        <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Chờ Kaggle" : "Chờ duyệt"}</strong></div>
-      </div>
-      <p className="infoNote">Chunk đã duyệt vẫn là dữ liệu tạm cho tới khi bước Kaggle và finalize hoàn tất.</p>
-      {loading ? <LoadingState message="Đang tải chunks..." /> : null}
+      {safeChunks.length > 0 ? (
+        <div className="summaryCards">
+          <div className="summaryCard"><span>Tổng chunk</span><strong>{safeChunks.length}</strong></div>
+          <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}</strong></div>
+          <div className="summaryCard"><span>Chờ Kaggle</span><strong>{waitingCount}</strong></div>
+          <div className="summaryCard"><span>Đã lưu sau Kaggle</span><strong>{finalizedCount}</strong></div>
+        </div>
+      ) : null}
+      {safeChunks.length > 0 ? <p className="infoNote">Chunk đã duyệt vẫn là dữ liệu tạm cho tới khi bước Kaggle và finalize hoàn tất.</p> : null}
+      {safeChunks.length > 0 && approvedCount === 0 ? (
+        <p className="infoNote neutral">Hãy duyệt ít nhất một chunk trước khi chuyển sang bước hoàn tất.</p>
+      ) : null}
+      {approvedCount > 0 ? (
+        <div className="successBox inlineSuccess">Đã duyệt {approvedCount}/{safeChunks.length} chunk. Các chunk đã duyệt đang chờ Kaggle xử lý.</div>
+      ) : null}
+      {loading && !isExtracting ? <LoadingState message="Đang tải chunk..." /> : null}
       {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
-      {!loading && !error && chunks == null ? <EmptyState message="Chưa có dữ liệu chunk. Hãy duyệt bài học trước khi trích xuất chunk." /> : null}
-      {!loading && !error && chunks != null && safeChunks.length === 0 ? <EmptyState message="Danh sách chunk đang trống." /> : null}
+      {isExtracting && safeChunks.length === 0 ? (
+        <ProcessingState
+          title="Đang trích xuất chunk"
+          message="Hệ thống đang tạo các chunk tạm từ bài học đã duyệt. Chunk chính thức sẽ được lưu sau bước Kaggle."
+          status={status}
+        />
+      ) : null}
+      {!isExtracting && !loading && !error && chunks == null ? <EmptyState message="Chưa có dữ liệu chunk. Hãy duyệt bài học trước khi trích xuất chunk." /> : null}
+      {!isExtracting && !loading && !error && chunks != null && safeChunks.length === 0 ? <EmptyState message="Danh sách chunk đang trống." /> : null}
       {groups.length > 0 ? (
         <div className="review-workspace">
           <aside className="review-navigator">
             <div className="cardHeaderCompact">
-              <h3>Chunk Navigator</h3>
+              <h3>Danh sách chunk</h3>
               <span>{groups.length} lesson</span>
             </div>
             {groups.map((group, groupIndex) => (
@@ -155,7 +180,8 @@ export default function ChunkReviewView({
             sourcePageHint="Bản PDF nguồn của phiên duyệt"
             extractedPageHint={selectedChunk ? `${selectedChunk.chunk_name || selectedChunk.title || "Chunk"} · Trang ${selectedChunk.start || "-"}-${selectedChunk.end || "-"}` : ""}
             extractedStatusBadge={selectedChunk ? <span className={`status-chip ${chunkStatus(selectedChunk).tone}`}>{chunkStatus(selectedChunk).label}</span> : null}
-            missingExtractedMessage="Preview chunk chưa sẵn sàng."
+            missingExtractedMessage="Chưa tìm thấy file preview chunk."
+            missingExtractedDetail="Nếu chunk vừa được trích xuất, vui lòng chờ thêm hoặc mở Debug để kiểm tra log."
           >
             <section className="review-editor">
               <h3>Metadata chunk</h3>
@@ -164,30 +190,22 @@ export default function ChunkReviewView({
                 <div className="metadataForm">
                   <label>
                     <span>Số chunk</span>
-                    <input value={selectedChunk.chunk_num ?? ""} disabled={approved} onChange={(event) => updateSelected("chunk_num", event.target.value)} />
+                    <input value={selectedChunk.chunk_num ?? ""} disabled={approved || selectedChunk.approved} onChange={(event) => updateSelected("chunk_num", event.target.value)} />
                   </label>
                   <label>
                     <span>Tên chunk</span>
-                    <input value={selectedChunk.chunk_name ?? ""} disabled={approved} onChange={(event) => updateSelected("chunk_name", event.target.value)} />
-                  </label>
-                  <label>
-                    <span>Tiêu đề</span>
-                    <input value={selectedChunk.title ?? ""} disabled={approved} onChange={(event) => updateSelected("title", event.target.value)} />
+                    <input value={selectedChunk.chunk_name ?? ""} disabled={approved || selectedChunk.approved} onChange={(event) => updateSelected("chunk_name", event.target.value)} />
                   </label>
                   <div className="twoColumn">
                     <label>
                       <span>Trang bắt đầu</span>
-                      <input type="number" value={selectedChunk.start ?? ""} disabled={approved} onChange={(event) => updateSelected("start", Number(event.target.value))} />
+                      <input type="number" value={selectedChunk.start ?? ""} disabled={approved || selectedChunk.approved} onChange={(event) => updateSelected("start", Number(event.target.value))} />
                     </label>
                     <label>
                       <span>Trang kết thúc</span>
-                      <input type="number" value={selectedChunk.end ?? ""} disabled={approved} onChange={(event) => updateSelected("end", Number(event.target.value))} />
+                      <input type="number" value={selectedChunk.end ?? ""} disabled={approved || selectedChunk.approved} onChange={(event) => updateSelected("end", Number(event.target.value))} />
                     </label>
                   </div>
-                  <label className="checkboxRow">
-                    <input type="checkbox" checked={Boolean(selectedChunk.content_head)} disabled={approved} onChange={(event) => updateSelected("content_head", event.target.checked)} />
-                    <span>content_head</span>
-                  </label>
                 </div>
                 {selectedChunk.approved || selectedChunk.waiting_for_kaggle ? (
                   <div className="warningBox inlineNotice">Chunk đã duyệt và đang chờ Kaggle xử lý trước khi lưu chính thức.</div>
@@ -197,7 +215,7 @@ export default function ChunkReviewView({
                 ) : null}
                 <div className="approvalActions">
                   <button type="button" className="primaryButton primary-action" onClick={() => onApproveChunk?.(selectedChunk)} disabled={loading || selectedChunk.approved}>
-                    Duyệt chunk này
+                    {selectedChunk.approved ? "Đã duyệt" : "Duyệt chunk này"}
                   </button>
                 </div>
               </>
@@ -216,6 +234,13 @@ export default function ChunkReviewView({
             <div className="actionBar">
               <button type="button" onClick={onSave} disabled={loading || approved || safeChunks.length === 0}>Lưu chỉnh sửa chunk</button>
               <button type="button" className="primaryButton" onClick={onApprove} disabled={loading || approved || safeChunks.length === 0}>Duyệt tất cả chunk</button>
+              <button
+                type="button"
+                onClick={() => onApproveChunkIds?.((selectedGroup.chunks || []).map((chunk) => chunk.chunk_id || chunk.id).filter(Boolean))}
+                disabled={loading || approved || !selectedGroup.chunks?.length}
+              >
+                Duyệt tất cả chunk trong bài này
+              </button>
               {selectedChunk ? (
                 <>
                   <button type="button" disabled={loading || approved || !onDelete} onClick={() => onDelete(selectedChunk.chunk_id || selectedChunk.id)}>Xóa chunk</button>
@@ -245,7 +270,40 @@ export default function ChunkReviewView({
 
       <div className="wizardNav">
         <button type="button" onClick={onBack}>Quay lại</button>
-        <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục hoàn tất</button>
+        {approvedCount > 0 ? (
+          <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục hoàn tất</button>
+        ) : safeChunks.length > 0 ? (
+          <span className="inlineHelper">Bạn cần duyệt ít nhất một chunk trước khi sang bước hoàn tất.</span>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function friendlyChunkProgress(status) {
+  const stage = String(status?.stage || "").toLowerCase();
+  const message = String(status?.message || "");
+  if (stage.includes("pdf") || stage.includes("split")) return "Đang cắt PDF theo chunk...";
+  if (stage.includes("gemini") || message.toLowerCase().includes("gemini")) return "Đang trích xuất chunk bằng Gemini...";
+  if (/key index|waiting_|gemini key/i.test(message)) return "Đang phân tích dữ liệu chunk...";
+  return message || "Đang trích xuất chunk...";
+}
+
+function ProcessingState({ title, message, status }) {
+  const rawPercent = Number(status?.percent);
+  const hasPercent = Number.isFinite(rawPercent) && rawPercent > 0;
+  const percent = Math.max(0, Math.min(rawPercent || 0, 100));
+  return (
+    <section className="processingState">
+      <div className="processingIcon" aria-hidden="true" />
+      <div>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <strong>{friendlyChunkProgress(status)}</strong>
+        <div className={`progressTrack ${hasPercent ? "" : "indeterminate"}`}>
+          <div className="progressFill" style={{ width: hasPercent ? `${percent}%` : "42%" }} />
+        </div>
+        <small>Bạn có thể mở Debug để xem log chi tiết.</small>
       </div>
     </section>
   );

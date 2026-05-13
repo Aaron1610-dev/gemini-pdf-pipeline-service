@@ -22,7 +22,7 @@ function pad2(value) {
 }
 
 function lessonStatus(lesson) {
-  if (lesson?.metadata_edu_saved || lesson?.minio_uploaded) return { label: "Đã lưu MongoDB-MinIO", tone: "done" };
+  if (lesson?.metadata_edu_saved || lesson?.minio_uploaded) return { label: "Đã lưu MinIO/MongoDB", tone: "done" };
   if (lesson?.approved) return { label: "Đã duyệt", tone: "pending" };
   return { label: "Chờ duyệt", tone: "pending" };
 }
@@ -34,6 +34,8 @@ export default function LessonReviewView({
   selectedTopicNum,
   approved,
   loading,
+  status,
+  jobStatus,
   error,
   onChange,
   onLoad,
@@ -56,6 +58,7 @@ export default function LessonReviewView({
   const approvedCount = safeLessons.filter((lesson) => lesson.metadata_edu_saved || lesson.approved).length;
   const sourcePreviewUrl = jobId ? getSourcePreviewUrl(jobId) : "";
   const lessonPreviewUrl = jobId && selectedLesson?.lesson_num ? getLessonPreviewUrl(jobId, selectedLesson.lesson_num) : "";
+  const isExtracting = jobStatus === "extracting_lessons" || status?.status === "extracting_lessons";
 
   function updateSelected(field, value) {
     if (selectedLessonIndex >= 0) onChange(selectedLessonIndex, field, value);
@@ -67,7 +70,7 @@ export default function LessonReviewView({
         <div>
           <span className="stepLabel">Bước 3</span>
           <h2>{selectedTopicNum ? `Bước 3: Bài học của Topic ${pad2(selectedTopicNum)}` : "Bước 3: Duyệt bài học"}</h2>
-          <p className="muted">Chọn bài học, xem PDF đã cắt và lưu metadata bài học.</p>
+          <p className="muted">Đối chiếu sách gốc với PDF bài học đã cắt và lưu metadata bài học.</p>
         </div>
         <div className="topicHeaderActions">
           <button type="button" onClick={onExtract} disabled={loading}>Trích xuất bài học</button>
@@ -75,22 +78,31 @@ export default function LessonReviewView({
         </div>
       </div>
 
-      <div className="summaryCards">
-        <div className="summaryCard"><span>Tổng bài học</span><strong>{safeLessons.length}</strong></div>
-        <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}/{safeLessons.length}</strong></div>
-        <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Đã lưu Metadata" : "Chờ duyệt"}</strong></div>
-      </div>
+      {safeLessons.length > 0 ? (
+        <div className="summaryCards">
+          <div className="summaryCard"><span>Tổng bài học</span><strong>{safeLessons.length}</strong></div>
+          <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}</strong></div>
+          <div className="summaryCard"><span>Chưa duyệt</span><strong>{Math.max(safeLessons.length - approvedCount, 0)}</strong></div>
+        </div>
+      ) : null}
 
-      {loading ? <LoadingState message="Đang tải lessons..." /> : null}
+      {loading && !isExtracting ? <LoadingState message="Đang tải bài học..." /> : null}
       {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
-      {!loading && !error && lessons == null ? <EmptyState message="Chưa có dữ liệu lesson. Hãy duyệt topic trước khi trích xuất bài học." /> : null}
-      {!loading && !error && lessons != null && safeLessons.length === 0 ? <EmptyState message="Danh sách lesson đang trống." /> : null}
+      {isExtracting && safeLessons.length === 0 ? (
+        <ProcessingState
+          title="Đang trích xuất bài học"
+          message="Hệ thống đang phân tích các chủ đề đã duyệt để tạo danh sách bài học và PDF tương ứng."
+          status={status}
+        />
+      ) : null}
+      {!isExtracting && !loading && !error && lessons == null ? <EmptyState message="Chưa có dữ liệu bài học. Hãy duyệt chủ đề trước khi trích xuất bài học." /> : null}
+      {!isExtracting && !loading && !error && lessons != null && safeLessons.length === 0 ? <EmptyState message="Danh sách bài học đang trống." /> : null}
 
       {groups.length > 0 ? (
         <div className="review-workspace lessonReviewLayout">
           <aside className="review-navigator">
             <div className="cardHeaderCompact">
-              <h3>Lesson Navigator</h3>
+              <h3>Danh sách bài học</h3>
               <span>{groups.length} topic</span>
             </div>
             {groups.map((group, groupIndex) => (
@@ -134,6 +146,7 @@ export default function LessonReviewView({
             extractedPageHint={selectedLesson ? `Lesson ${pad2(selectedLesson.lesson_num)} · Trang ${selectedLesson.start || "-"}-${selectedLesson.end || "-"}` : ""}
             extractedStatusBadge={selectedLesson ? <span className={`status-chip ${lessonStatus(selectedLesson).tone}`}>{lessonStatus(selectedLesson).label}</span> : null}
             missingExtractedMessage="Preview bài học chưa sẵn sàng."
+            missingExtractedDetail="Nếu bài học vừa được trích xuất, vui lòng chờ thêm hoặc mở Debug để kiểm tra log."
           >
             <section className="review-editor">
               <h3>Metadata bài học</h3>
@@ -202,7 +215,40 @@ export default function LessonReviewView({
 
       <div className="wizardNav">
         <button type="button" onClick={onBack}>Quay lại</button>
-        <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục chunk</button>
+        {approvedCount > 0 ? (
+          <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục chunk</button>
+        ) : safeLessons.length > 0 ? (
+          <span className="inlineHelper">Bạn cần duyệt ít nhất một bài học trước khi sang bước chunk.</span>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function friendlyLessonProgress(status) {
+  const stage = String(status?.stage || "").toLowerCase();
+  const message = String(status?.message || "");
+  if (stage.includes("pdf") || stage.includes("split")) return "Đang cắt PDF theo bài học...";
+  if (stage.includes("gemini") || message.toLowerCase().includes("gemini")) return "Đang trích xuất bài học bằng Gemini...";
+  if (/key index|waiting_|gemini key/i.test(message)) return "Đang phân tích dữ liệu bài học...";
+  return message || "Đang trích xuất bài học...";
+}
+
+function ProcessingState({ title, message, status }) {
+  const rawPercent = Number(status?.percent);
+  const hasPercent = Number.isFinite(rawPercent) && rawPercent > 0;
+  const percent = Math.max(0, Math.min(rawPercent || 0, 100));
+  return (
+    <section className="processingState">
+      <div className="processingIcon" aria-hidden="true" />
+      <div>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <strong>{friendlyLessonProgress(status)}</strong>
+        <div className={`progressTrack ${hasPercent ? "" : "indeterminate"}`}>
+          <div className="progressFill" style={{ width: hasPercent ? `${percent}%` : "42%" }} />
+        </div>
+        <small>Bạn có thể mở Debug để xem log chi tiết.</small>
       </div>
     </section>
   );

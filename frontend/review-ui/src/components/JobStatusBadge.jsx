@@ -6,12 +6,12 @@ const LABELS = {
   reviewing_lessons: "Chờ duyệt bài học",
   extracting_chunks: "Đang trích xuất chunk",
   reviewing_chunks: "Chờ duyệt chunk",
-  preparing_bundle: "Đang tạo dữ liệu hoàn tất",
+  preparing_bundle: "Đang hoàn tất",
   running_kaggle: "Đang xử lý Kaggle OCR/cutline",
   extracting_keywords: "Đang trích xuất keyword",
-  bundle_ready: "Dữ liệu hoàn tất sẵn sàng",
+  bundle_ready: "Sẵn sàng lưu",
   importing_mongodb: "Đang lưu metadata",
-  mongodb_imported: "Đã lưu metadata",
+  mongodb_imported: "Đã lưu dữ liệu",
   error: "Lỗi",
 };
 

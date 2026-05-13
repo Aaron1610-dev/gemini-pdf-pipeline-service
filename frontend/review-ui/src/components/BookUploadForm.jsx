@@ -64,17 +64,22 @@ export default function BookUploadForm({ onUploaded }) {
     <section className="panel uploadCard">
       <div className="panelHeader">
         <div>
-          <h2>Tải sách giáo khoa</h2>
-          <p className="muted">Tạo phiên duyệt metadata theo quy trình Topic, Lesson và Chunk.</p>
+          <h2>Tạo phiên duyệt mới</h2>
+          <p className="muted">Chọn sách PDF để bắt đầu quy trình trích xuất và duyệt metadata.</p>
         </div>
       </div>
       <form className="formGrid" onSubmit={submit}>
         <label className="fileDrop">
           <span className="fileDropIcon">PDF</span>
-          <strong>{file ? file.name : "Chọn hoặc kéo thả file PDF"}</strong>
-          <small>Sau khi tạo phiên, sách được lưu riêng tư và xem qua backend preview.</small>
+          <strong>{file ? file.name : "Kéo thả hoặc chọn file PDF"}</strong>
+          <small>Hỗ trợ sách giáo khoa định dạng PDF</small>
           <input className="nativeFileInput" type="file" accept="application/pdf,.pdf" onChange={(event) => setFile(event.target.files?.[0] || null)} />
         </label>
+        <div className="defaultHintChips" aria-label="Cấu hình mặc định">
+          <span>Khối 11</span>
+          <span>Tin học</span>
+          <span>Kết nối tri thức</span>
+        </div>
         <label>
           <span>Tên tài liệu (tuỳ chọn)</span>
           <input
@@ -98,13 +103,13 @@ export default function BookUploadForm({ onUploaded }) {
           <input value={form.subject_type} onChange={(event) => update("subject_type", event.target.value)} />
         </label>
         <div className="toggleRow">
-          <label className="checkboxRow">
+          <label className={`checkboxRow toggleChip ${form.enable_keywords ? "checked" : ""}`}>
             <input type="checkbox" checked={form.enable_keywords} onChange={(event) => update("enable_keywords", event.target.checked)} />
-            <span>Bật trích xuất keyword</span>
+            <span>Trích xuất keyword</span>
           </label>
-          <label className="checkboxRow">
+          <label className={`checkboxRow toggleChip ${form.enable_kaggle ? "checked" : ""}`}>
             <input type="checkbox" checked={form.enable_kaggle} onChange={(event) => update("enable_kaggle", event.target.checked)} />
-            <span>Bật Kaggle OCR/cutline</span>
+            <span>Kaggle OCR/cutline</span>
           </label>
         </div>
         {error ? <div className="inlineError">{error}</div> : null}

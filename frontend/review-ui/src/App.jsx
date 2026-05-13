@@ -526,77 +526,98 @@ export default function App() {
     setActiveStep(step);
   }
 
+  function beginCreateSession() {
+    stopPolling();
+    setSelectedJobId("");
+    setJob(null);
+    setStatus(null);
+    setDetailsError("");
+    setNavWarning("");
+    setSuccessMessage("");
+    resetReviewData();
+    setActiveStep(WORKFLOW_STEPS.upload);
+  }
+
   return (
-    <div className="appShell review-shell">
-      <header className="topBar review-header">
-        <div className="brandBlock review-brand">
-          <span className="brandEyebrow">KLTN Review System</span>
-          <h1>AI Tra Cứu</h1>
-          <p>Duyệt và chuẩn hoá cấu trúc sách giáo khoa bằng AI</p>
+    <div className="appShell review-shell workspaceShell">
+      <aside className="appSidebar">
+        <div className="sidebarBrand">
+          <span className="brandMark">AI</span>
+          <div>
+            <h1>AI Tra Cứu</h1>
+            <p>Review-first Metadata</p>
+          </div>
         </div>
-        <div className="headerStepper">
-          <ReviewStepper status={selectedStatus} activeStep={activeStep} onStepChange={changeStep} />
-        </div>
-        <div className="headerActions">
+        <button type="button" className="primaryButton newSessionButton" onClick={beginCreateSession}>+ Tạo phiên duyệt</button>
+        {jobsError ? <ErrorState message={jobsError} onRetry={loadJobs} /> : null}
+        <JobList jobs={jobs} selectedJobId={selectedJobId} loading={jobsLoading} onSelect={setSelectedJobId} onRefresh={loadJobs} />
+        <div className="sidebarFooter">
           <button type="button" className={`healthBadge ${backendOk ? "ok" : "down"}`} onClick={checkHealth}>
             Backend: {backendOk ? "OK" : healthError ? "Không kết nối được" : "Đang kiểm tra..."}
           </button>
-          {selectedStatus ? <JobStatusBadge status={selectedStatus} /> : null}
-          <button type="button" className="secondary-action" onClick={() => setDebugOpen((value) => !value)}>
-            {debugOpen ? "Đóng debug" : "Mở debug"}
-          </button>
+          <span className="smallText">Metadata-Edu pipeline</span>
         </div>
-      </header>
+      </aside>
 
-      {healthError ? <div className="warningBox">{healthError}</div> : null}
-      {successMessage ? <div className="successBanner">{successMessage}</div> : null}
-      {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang xử lý dữ liệu..." /> : null}
+      <main className="appMain">
+        <header className="workspaceTopbar">
+          <div className="workspaceTitle">
+            <h2>{selectedJobId && activeStep !== WORKFLOW_STEPS.upload ? (job?.book_name || "Phiên duyệt") : "Tạo phiên duyệt mới"}</h2>
+            <p>
+              {selectedJobId && activeStep !== WORKFLOW_STEPS.upload
+                ? `Khối ${job?.class_name || "-"} · ${job?.subject_name || "-"} · ${job?.subject_type || "-"}`
+                : "Tải sách PDF để bắt đầu quy trình duyệt metadata"}
+            </p>
+          </div>
+          <div className="workspaceActions">
+            {selectedStatus && activeStep !== WORKFLOW_STEPS.upload ? <JobStatusBadge status={selectedStatus} /> : null}
+            {selectedJobId && activeStep !== WORKFLOW_STEPS.upload ? (
+              <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
+                Xem sách gốc
+              </button>
+            ) : null}
+            <button type="button" className="secondary-action" onClick={() => setDebugOpen((value) => !value)}>
+              {debugOpen ? "Đóng debug" : "Mở debug"}
+            </button>
+          </div>
+        </header>
 
-      <main className="focusShell review-main">
+        {healthError ? <div className="warningBox inlineNotice">{healthError}</div> : null}
+        {successMessage ? <div className="successBanner compactBanner">{successMessage}</div> : null}
+        {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang xử lý dữ liệu..." /> : null}
+
         {!selectedJobId || activeStep === WORKFLOW_STEPS.upload ? (
-          <section className="uploadStepGrid uploadLanding">
-            <div className="introPanel panel thesisIntro">
-              <span className="stepLabel">Phiên duyệt học thuật</span>
-              <h2>Chuẩn hoá metadata sách giáo khoa</h2>
-              <p>Chọn sách, xem bản PDF đã cắt, chỉnh metadata và lưu từng cấp dữ liệu vào Metadata-Edu.</p>
-            </div>
+          <section className="workspaceUpload">
             <BookUploadForm onUploaded={afterUpload} />
-            <div>
-              {jobsError ? <ErrorState message={jobsError} onRetry={loadJobs} /> : null}
-              <JobList jobs={jobs} selectedJobId={selectedJobId} loading={jobsLoading} onSelect={setSelectedJobId} onRefresh={loadJobs} />
-            </div>
           </section>
-        ) : (
-          <div className="currentReviewBar bookContextBar">
-            {job ? (
+        ) : null}
+
+        {selectedJobId && activeStep !== WORKFLOW_STEPS.upload ? (
+          <>
+            <section className="documentContextCard">
               <div className="book-summary-card">
                 <div className="source-book-thumbnail pdfCoverPlaceholder" aria-label="Sách gốc">
                   <span>PDF</span>
                   <strong>Sách gốc</strong>
-                  <small>{job.book_name || "Tài liệu"}</small>
+                  <small>{job?.book_name || "Tài liệu"}</small>
                 </div>
                 <div className="currentDocument">
-                  <strong>{job.book_name || "Tài liệu chưa đặt tên"}</strong>
+                  <strong>{job?.book_name || "Tài liệu chưa đặt tên"}</strong>
                   <div className="bookMetaChips">
-                    <span>Section {job.class_name || "-"}</span>
-                    <span>{job.subject_name || "-"}</span>
-                    <span>{job.subject_type || "-"}</span>
+                    <span>Khối {job?.class_name || "-"}</span>
+                    <span>{job?.subject_name || "-"}</span>
+                    <span>{job?.subject_type || "-"}</span>
                     <span>{shortJobId}</span>
                     <em>{job?.minio?.subject_asset_uploaded ? "Đã tải MinIO" : BUSY_STATUSES.has(selectedStatus) ? "Đang xử lý" : "Chờ duyệt"}</em>
                   </div>
                 </div>
               </div>
-            ) : null}
-            <div className="bookContextActions">
-              <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
-                Xem sách gốc
-              </button>
-              <button type="button" className="secondary-action" onClick={() => setActiveStep(WORKFLOW_STEPS.upload)}>Đổi sách</button>
-            </div>
-          </div>
-        )}
+            </section>
+            <ReviewStepper status={selectedStatus} activeStep={activeStep} onStepChange={changeStep} />
+          </>
+        ) : null}
 
-        {selectedJobId && activeStep !== WORKFLOW_STEPS.upload ? <section className="contentArea">
+        {selectedJobId && activeStep !== WORKFLOW_STEPS.upload ? <section className="contentArea workspaceContent">
           {!selectedJobId && !jobsLoading ? (
             <EmptyState title="Chưa chọn job" message="Upload hoặc chọn một sách/job ở danh sách bên trái để bắt đầu review." />
           ) : null}

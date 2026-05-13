@@ -14,6 +14,14 @@ class GeminiKeyError(RuntimeError):
     pass
 
 
+class GeminiAllKeysCooldownError(GeminiKeyError):
+    def __init__(self, next_available_at: str | None) -> None:
+        self.next_available_at = next_available_at
+        super().__init__(
+            f"All Gemini API keys are in cooldown. Next available time: {next_available_at}."
+        )
+
+
 @dataclass(frozen=True)
 class ErrorClassification:
     type: str
@@ -89,6 +97,9 @@ class GeminiKeyManager:
 
     def safe_snapshot(self) -> dict[str, Any]:
         keys = []
+        usable_count = 0
+        cooldown_count = 0
+        dead_count = 0
         for index in range(self.key_count()):
             index_key = str(index)
             status = "available"
@@ -96,8 +107,12 @@ class GeminiKeyManager:
             dead_info = self.state["dead_keys"].get(index_key)
             if dead_info:
                 status = "dead"
+                dead_count += 1
             elif cooldown_until and not self._cooldown_expired(cooldown_until):
                 status = "cooldown"
+                cooldown_count += 1
+            else:
+                usable_count += 1
             keys.append(
                 {
                     "index": index,
@@ -109,9 +124,15 @@ class GeminiKeyManager:
             )
         return {
             "key_count": self.key_count(),
+            "total_keys": self.key_count(),
             "current_index": self.get_current_index(),
+            "usable_count": usable_count,
+            "cooldown_count": cooldown_count,
+            "dead_count": dead_count,
+            "next_available_at": self._next_available_time(),
             "state_path": str(self.state_path),
             "keys": keys,
+            "last_errors": self.state.get("last_errors", {}),
             "updated_at": self.state.get("updated_at"),
         }
 
@@ -147,9 +168,7 @@ class GeminiKeyManager:
             raise GeminiKeyError("All Gemini API keys are marked dead.")
 
         next_time = self._next_available_time()
-        raise GeminiKeyError(
-            f"All Gemini API keys are in cooldown. Next available time: {next_time}."
-        )
+        raise GeminiAllKeysCooldownError(next_time)
 
     def rotate_next(self) -> dict[str, Any]:
         if self.key_count() == 0:
@@ -167,9 +186,7 @@ class GeminiKeyManager:
             raise GeminiKeyError("All Gemini API keys are marked dead.")
 
         next_time = self._next_available_time()
-        raise GeminiKeyError(
-            f"All Gemini API keys are in cooldown. Next available time: {next_time}."
-        )
+        raise GeminiAllKeysCooldownError(next_time)
 
     def mark_cooldown(
         self,

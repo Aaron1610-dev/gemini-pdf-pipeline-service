@@ -20,6 +20,12 @@ class Settings:
     gemini_model: str
     mongo_uri: str
     mongo_db_name: str
+    minio_endpoint: str
+    minio_access_key: str
+    minio_secret_key: str
+    minio_bucket: str
+    minio_secure: bool
+    minio_public_url: str
     enable_kaggle: bool
     kaggle_username: str
     kaggle_key: str
@@ -41,7 +47,13 @@ def get_settings() -> Settings:
         log_dir=Path(os.getenv("LOG_DIR", "./logs")),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
-        mongo_db_name=os.getenv("MONGO_DB_NAME", "gemini_pipeline_test"),
+        mongo_db_name=os.getenv("MONGO_DB_NAME", "data-ai-tra-cuu"),
+        minio_endpoint=os.getenv("MINIO_ENDPOINT", "http://127.0.0.1:9000"),
+        minio_access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+        minio_secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+        minio_bucket=os.getenv("MINIO_BUCKET", "ai-tra-cuu"),
+        minio_secure=os.getenv("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"},
+        minio_public_url=os.getenv("MINIO_PUBLIC_URL", "http://127.0.0.1:9000"),
         enable_kaggle=os.getenv("ENABLE_KAGGLE", "false").lower() in {"1", "true", "yes", "on"},
         kaggle_username=os.getenv("KAGGLE_USERNAME", ""),
         kaggle_key=os.getenv("KAGGLE_KEY", ""),

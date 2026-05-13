@@ -52,6 +52,7 @@ class JobState(BaseModel):
     workspace_path: str
     output_path: str
     error: str | None = None
+    minio: dict[str, Any] | None = None
     created_at: str
     updated_at: str
 
@@ -84,6 +85,7 @@ class JobCreateResponse(BaseModel):
     workspace_path: str
     source_pdf_path: str
     message: str
+    minio: dict[str, Any] | None = None
 
 
 class JobLogResponse(BaseModel):
@@ -96,4 +98,3 @@ class FutureEndpointResponse(BaseModel):
     ok: bool = False
     message: str = "Not implemented in Phase 1"
     phase: str = "future"
-

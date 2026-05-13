@@ -190,7 +190,45 @@ curl -X POST http://localhost:8100/api/jobs/{job_id}/import-mongodb
 curl http://localhost:8100/api/jobs/{job_id}/mongo-import-result
 ```
 
-Keyword files that are empty, placeholder, invalid, or contain `error` are skipped. Topic, lesson, and chunk import still succeeds.
+By default this endpoint uploads PDFs to MinIO and writes Metadata-Edu shaped documents to `MONGO_DB_NAME`:
+
+```bash
+curl -X POST "http://localhost:8100/api/jobs/{job_id}/import-mongodb?upload_minio=true&dry_run=false"
+```
+
+Useful variants:
+
+```bash
+curl -X POST "http://localhost:8100/api/jobs/{job_id}/import-mongodb?upload_minio=false"
+curl -X POST "http://localhost:8100/api/jobs/{job_id}/import-mongodb?dry_run=true"
+```
+
+Collections written:
+
+```text
+class
+subject
+topic
+lesson
+chunk
+asset
+keyword
+keyword_alias
+chunk_keyword
+topic_bag
+import_job
+```
+
+MinIO paths use:
+
+```text
+documents/lop-{grade}/tin-hoc/subject/
+documents/lop-{grade}/tin-hoc/topic/topic_{NN}/
+documents/lop-{grade}/tin-hoc/lesson/topic_{NN}-lesson_{NN}/
+documents/lop-{grade}/tin-hoc/chunk/topic_{NN}-lesson_{NN}-chunk_{NN}/
+```
+
+Keyword files that are empty, placeholder, invalid, or contain `error` are skipped. Topic, lesson, chunk, and asset import still succeeds.
 
 ## Fake Backend Examples
 

@@ -26,15 +26,15 @@ def extract_lessons(job_id: str, background_tasks: BackgroundTasks):
         job_id,
         status=JobStatus.extracting_lessons,
         stage="extracting_lessons",
-        message="Lesson extraction queued.",
-        percent=0,
+        message="Đang trích xuất bài học, vui lòng chờ...",
+        percent=5,
     )
     background_tasks.add_task(extract_lessons_for_job, job_id)
     return {
         "ok": True,
         "job_id": job_id,
         "status": JobStatus.extracting_lessons,
-        "message": "Lesson extraction started",
+        "message": "Đang trích xuất bài học, vui lòng chờ...",
     }
 
 

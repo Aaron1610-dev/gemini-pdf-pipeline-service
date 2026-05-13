@@ -303,7 +303,7 @@ def _map_lessons_to_topics(
             job_id,
             status=JobStatus.extracting_lessons,
             stage="extracting_lessons",
-            message=f"Mapping lessons from topic {topic_index + 1}/{total}.",
+            message=f"Đang ánh xạ bài học theo chủ đề {topic_index + 1}/{total}.",
             percent=pct,
             current=topic_index + 1,
             total=total,
@@ -334,8 +334,8 @@ def extract_lessons_for_job(job_id: str) -> None:
             job_id,
             status=JobStatus.extracting_lessons,
             stage="extracting_lessons",
-            message="Preparing lesson rebuild.",
-            percent=0,
+            message="Chuẩn bị dữ liệu chủ đề đã duyệt...",
+            percent=5,
             current=0,
             total=len(approved_topics),
         )
@@ -348,20 +348,56 @@ def extract_lessons_for_job(job_id: str) -> None:
         if not raw_lessons:
             _log(job_id, "raw lessons missing; fallback lessons will be created from topic ranges")
 
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_lessons,
+            stage="mapping_lessons",
+            message="Đang ánh xạ bài học vào từng chủ đề...",
+            percent=15,
+            current=0,
+            total=len(approved_topics),
+        )
         lessons_out = _map_lessons_to_topics(approved_topics, raw_lessons, job_id)
         if not lessons_out:
             raise ValueError("No lessons produced from approved topics.")
 
         _log(job_id, "rebuild Topic/ started")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_lessons,
+            stage="rebuilding_topic_pdfs",
+            message="Đang cắt lại PDF theo chủ đề đã duyệt...",
+            percent=35,
+            current=0,
+            total=len(approved_topics),
+        )
         _build_topic_pdfs(bundle_dir, book_stem, str(source_pdf), approved_topics)
         _log(job_id, f"rebuild Topic/ completed count={len(approved_topics)}")
 
         _log(job_id, "rebuild Lesson/ started")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_lessons,
+            stage="rebuilding_lesson_pdfs",
+            message="Đang cắt PDF theo bài học...",
+            percent=65,
+            current=0,
+            total=len(lessons_out),
+        )
         _build_lesson_pdfs(bundle_dir, book_stem, str(source_pdf), lessons_out)
         _log(job_id, f"rebuild Lesson/ completed count={len(lessons_out)}")
 
         manifest_path = _write_bundle_manifest(bundle_dir, book_stem, approved_topics, lessons_out)
         _log(job_id, f"manifest rewrite completed path={manifest_path}")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_lessons,
+            stage="writing_lessons",
+            message="Đang ghi dữ liệu bài học...",
+            percent=90,
+            current=len(lessons_out),
+            total=len(lessons_out),
+        )
 
         state["rebuilt_bundle_path"] = str(bundle_dir)
         state["bundle_path"] = str(bundle_dir)
@@ -381,7 +417,7 @@ def extract_lessons_for_job(job_id: str) -> None:
             job_id,
             ok=True,
             status=JobStatus.reviewing_lessons,
-            message="Lesson extraction completed. Waiting for review.",
+            message="Đã trích xuất bài học, chờ duyệt.",
             data={
                 "bundle_path": str(bundle_dir),
                 "book_stem": book_stem,
@@ -393,7 +429,7 @@ def extract_lessons_for_job(job_id: str) -> None:
             job_id,
             status=JobStatus.reviewing_lessons,
             stage="reviewing_lessons",
-            message="Lesson extraction completed. Waiting for review.",
+            message="Đã trích xuất bài học, chờ duyệt.",
             percent=100,
             current=len(lessons_out),
             total=len(lessons_out),

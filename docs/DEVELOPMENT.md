@@ -27,6 +27,13 @@ GEMINI_API_KEYS=your_key_1,your_key_2
 MONGO_URI=mongodb://localhost:27017
 MONGO_DB_NAME=data-ai-tra-cuu
 
+MINIO_ENDPOINT=http://127.0.0.1:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=data-edu
+MINIO_SECURE=false
+MINIO_PUBLIC_URL=http://127.0.0.1:9000
+
 ENABLE_KAGGLE=false
 KAGGLE_USERNAME=
 KAGGLE_KEY=
@@ -215,6 +222,34 @@ uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload
 ```
 
 Verify in MongoDB Compass by opening `data-ai-tra-cuu` and checking `class`, `subject`, `topic`, `lesson`, `chunk`, `keyword`, `chunk_keyword`, and `import_job`.
+
+## MinIO
+
+Run MinIO locally and configure the pipeline service with:
+
+```env
+MINIO_ENDPOINT=http://127.0.0.1:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=data-edu
+MINIO_SECURE=false
+MINIO_PUBLIC_URL=http://127.0.0.1:9000
+```
+
+The importer creates the bucket if it does not exist. Verify uploads in the MinIO console by checking:
+
+```text
+data-edu/documents/lop-11/tin-hoc/subject/
+data-edu/documents/lop-11/tin-hoc/topic/
+data-edu/documents/lop-11/tin-hoc/lesson/
+data-edu/documents/lop-11/tin-hoc/chunk/
+```
+
+MinIO upload logs are written to:
+
+```text
+workspace/{job_id}/logs/minio_upload.log
+```
 
 ### MongoDB Connection Refused
 

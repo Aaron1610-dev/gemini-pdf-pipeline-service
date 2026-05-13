@@ -10,7 +10,7 @@ def create_initial_progress(job_id: str) -> JobProgress:
         status=JobStatus.uploaded,
         stage="uploaded",
         percent=0,
-        message="PDF uploaded. Waiting for topic extraction.",
+        message="Đang chuẩn bị upload sách lên MinIO.",
         current=0,
         total=0,
         updated_at=utc_now_iso(),

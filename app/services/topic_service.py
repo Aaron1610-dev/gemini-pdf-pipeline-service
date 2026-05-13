@@ -75,8 +75,8 @@ def extract_topics_for_job(job_id: str) -> None:
             job_id,
             status=JobStatus.extracting_topics,
             stage="preparing_topics",
-            message="Preparing topic extraction.",
-            percent=0,
+            message="Chuẩn bị file PDF...",
+            percent=5,
         )
         _log(job_id, "start extraction")
         _log(job_id, f"source_pdf={source_pdf}")
@@ -84,6 +84,15 @@ def extract_topics_for_job(job_id: str) -> None:
 
         total_pages = len(PdfReader(str(source_pdf)).pages)
         _log(job_id, f"pdf_pages={total_pages}")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_topics,
+            stage="uploading_pdf_to_gemini",
+            message="Đang upload PDF lên Gemini...",
+            percent=15,
+            current=0,
+            total=total_pages,
+        )
 
         key_manager = GeminiKeyManager.from_env()
         if key_manager.key_count() == 0:
@@ -105,7 +114,7 @@ def extract_topics_for_job(job_id: str) -> None:
         def status_cb(message: str) -> None:
             progress_cb("waiting_gemini_topics", message)
 
-        progress_cb("uploading_pdf_to_gemini", "Building preview PDF and sending request to Gemini.")
+        progress_cb("calling_gemini_topics", "Đang gọi Gemini trích xuất chủ đề.", 35, 100)
         manifest, manifest_path, split_result = run_extract_save_split(
             key_manager,
             str(source_pdf),
@@ -121,6 +130,16 @@ def extract_topics_for_job(job_id: str) -> None:
             for index, item in enumerate(flatten_manifest_items(manifest.get("list_topic", [])))
         ]
         raw_lessons = flatten_manifest_items(manifest.get("list_lesson", []))
+
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_topics,
+            stage="writing_topics",
+            message="Đang ghi dữ liệu chủ đề...",
+            percent=90,
+            current=len(topics),
+            total=len(topics),
+        )
 
         write_json(_workspace_file(job_id, "topics_partial.json"), {"topics": topics})
         write_json(
@@ -140,7 +159,7 @@ def extract_topics_for_job(job_id: str) -> None:
             job_id,
             ok=True,
             status=JobStatus.reviewing_topics,
-            message="Topic extraction completed. Waiting for review.",
+            message="Đã trích xuất chủ đề, chờ duyệt.",
             data={
                 "bundle_path": str(bundle_dir),
                 "book_stem": book_stem,
@@ -151,7 +170,7 @@ def extract_topics_for_job(job_id: str) -> None:
             job_id,
             status=JobStatus.reviewing_topics,
             stage="reviewing_topics",
-            message="Topic extraction completed. Waiting for review.",
+            message="Đã trích xuất chủ đề, chờ duyệt.",
             percent=100,
             current=len(topics),
             total=len(topics),
@@ -236,4 +255,3 @@ def approve_topics(job_id: str, topics: list[dict[str, Any]] | None = None) -> d
     )
     _log(job_id, f"topics approved count={len(topics)}")
     return {"ok": True, "job_id": job_id, "approved": True, "topics": topics}
-

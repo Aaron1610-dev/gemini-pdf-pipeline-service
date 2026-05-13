@@ -302,8 +302,7 @@ Important endpoints:
 - `GET /api/jobs/{job_id}/mongo-import-result`
 
 Remaining TODOs:
-- Keep Mongo import scoped to testing until production schema requirements are finalized.
-- PostgreSQL, Neo4j, and MinIO remain intentionally out of scope.
+- Superseded by Phase 13 for Metadata-Edu schema and MinIO upload.
 
 ## Phase 11: Fake Backend Integration
 
@@ -369,7 +368,49 @@ Remaining TODOs:
 - Run a real Kaggle postprocess job once Kaggle credentials and kernel/dataset ownership are confirmed.
 - Keep Kaggle as optional until production runtime expectations are stable.
 
-## Next Phases
+## Phase 13: Metadata-Edu MongoDB Import + MinIO Upload
 
-- Phase 13: Optional `full_auto` mode.
+Goal:
+Store final review-first bundles according to the Metadata-Edu thesis schema and upload generated PDFs to MinIO.
+
+Result:
+- Added MinIO configuration and `minio` dependency.
+- Added `app/services/minio_service.py`.
+- Added `app/services/metadata_edu_import_service.py`.
+- Updated `POST /api/jobs/{job_id}/import-mongodb` to use the Metadata-Edu importer by default.
+- Preserved the older temporary importer in `mongo_import_service.py`.
+- Writes class, subject, topic, lesson, chunk, asset, keyword, keyword_alias, chunk_keyword, topic_bag, and import_job collections.
+- Uploads subject/topic/lesson/chunk PDFs under `documents/lop-{grade}/tin-hoc/...`.
+- Writes `workspace/{job_id}/logs/mongo_import.log` and `workspace/{job_id}/logs/minio_upload.log`.
+
+Verified status:
+- Smoke-tested with job `aad50085-93a9-41ba-9e6d-b14b412e7684`.
+- First import succeeded with 109 uploaded PDFs and 109 asset documents for this job.
+- Second import succeeded with stable MongoDB counts, confirming idempotent upserts for the tested bundle.
+
+Verified counts for the smoke job:
+- `class`: 1
+- `subject`: 1
+- `topic`: 7
+- `lesson`: 31
+- `chunk`: 70
+- `asset`: 109
+- `keyword`: 0
+- `chunk_keyword`: 0
+- `topic_bag`: 0
+
+Keyword count is zero for this smoke job because all 70 keyword files were empty placeholders.
+
+Important endpoints:
+- `POST /api/jobs/{job_id}/import-mongodb?upload_minio=true&dry_run=false`
+- `POST /api/jobs/{job_id}/import-mongodb?upload_minio=false`
+- `POST /api/jobs/{job_id}/import-mongodb?dry_run=true`
+- `GET /api/jobs/{job_id}/mongo-import-result`
+
+Remaining TODOs:
+- Add richer verification fixtures for non-empty keyword files and aliases.
+
+## Next Phases After Phase 13
+
+- Phase 14: Optional `full_auto` mode.
 - Future production hardening: worker queue, auth, observability, and deployment configuration.

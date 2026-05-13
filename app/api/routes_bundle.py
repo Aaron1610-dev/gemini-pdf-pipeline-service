@@ -32,8 +32,8 @@ def prepare_bundle(
         job_id,
         status=JobStatus.preparing_bundle,
         stage="preparing_bundle",
-        message="Bundle preparation queued.",
-        percent=0,
+        message="Đang tạo bundle cuối, vui lòng chờ...",
+        percent=5,
     )
     background_tasks.add_task(
         prepare_bundle_for_job,
@@ -46,7 +46,7 @@ def prepare_bundle(
         "ok": True,
         "job_id": job_id,
         "status": JobStatus.preparing_bundle,
-        "message": "Bundle preparation started",
+        "message": "Đang tạo bundle cuối, vui lòng chờ...",
         "skip_kaggle": skip_kaggle,
         "skip_keywords": skip_keywords,
         "retry_failed_keywords_only": retry_failed_keywords_only,

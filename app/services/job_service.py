@@ -13,6 +13,7 @@ from app.core.paths import (
     job_state_path,
     job_workspace,
     output_root,
+    workspace_root,
 )
 from app.models.job_models import (
     JobConfig,
@@ -25,9 +26,12 @@ from app.models.job_models import (
 from app.services.progress_service import (
     create_initial_progress,
     create_initial_result,
+    update_progress,
+    update_result,
     write_progress,
     write_result,
 )
+from app.services.subject_upload_service import upload_subject_pdf_for_job
 from app.utils.files import ensure_dir, read_json, tail_text, write_json
 from app.utils.time import utc_now_iso
 
@@ -136,13 +140,62 @@ async def create_job(
         f"{now} Job created. status=uploaded source_pdf={source_pdf}",
     )
 
+    try:
+        minio_summary = upload_subject_pdf_for_job(
+            job_id=job_id,
+            source_pdf_path=source_pdf,
+            book_name=book_name,
+            class_name=class_name,
+            subject_name=subject_name,
+            subject_type=subject_type,
+        )
+        state_data = read_json(job_state_path(job_id))
+        state_data["stage"] = "uploaded_to_minio"
+        state_data["minio"] = minio_summary
+        state_data["updated_at"] = utc_now_iso()
+        write_json(job_state_path(job_id), state_data)
+        update_progress(
+            job_id,
+            status=JobStatus.uploaded,
+            stage="uploaded_to_minio",
+            message="Sách đã được tải lên MinIO và sẵn sàng trích xuất chủ đề.",
+            percent=100,
+            current=1,
+            total=1,
+        )
+        update_result(
+            job_id,
+            ok=True,
+            status=JobStatus.uploaded,
+            message="Sách đã được tải lên MinIO và sẵn sàng trích xuất chủ đề.",
+            data={"minio": minio_summary},
+        )
+        append_job_log(
+            job_log_path(job_id),
+            f"{utc_now_iso()} Subject PDF uploaded to MinIO bucket={minio_summary.get('bucket')} object_key={minio_summary.get('subject_object_key')}",
+        )
+    except Exception as exc:
+        error = f"Không upload được sách lên MinIO/MongoDB: {exc}"
+        state_data = read_json(job_state_path(job_id))
+        state_data["status"] = JobStatus.error.value
+        state_data["stage"] = "uploading_subject_to_minio"
+        state_data["error"] = error
+        state_data["minio"] = {"enabled": True, "subject_asset_uploaded": False, "error": error}
+        state_data["updated_at"] = utc_now_iso()
+        write_json(job_state_path(job_id), state_data)
+        update_progress(job_id, status=JobStatus.error, stage="uploading_subject_to_minio", message=error, percent=0)
+        update_result(job_id, ok=False, status=JobStatus.error, message="Upload MinIO/MongoDB thất bại.", error=error)
+        append_job_log(job_log_path(job_id), f"{utc_now_iso()} {error}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error) from exc
+
     return JobCreateResponse(
         ok=True,
         job_id=job_id,
         status=JobStatus.uploaded,
         workspace_path=str(workspace),
         source_pdf_path=str(source_pdf),
-        message="Job created.",
+        message="Sách đã được tải lên MinIO và sẵn sàng trích xuất chủ đề.",
+        minio=minio_summary,
     )
 
 
@@ -166,6 +219,38 @@ def get_job(job_id: str) -> dict:
         "job_log_path": str(job_log_path(job_id)),
     }
     return state
+
+
+def list_jobs() -> dict:
+    root = workspace_root()
+    if not root.exists():
+        return {"ok": True, "items": [], "count": 0}
+
+    jobs = []
+    for state_path in sorted(root.glob("*/job_state.json")):
+        try:
+            state = read_json(state_path)
+        except Exception:
+            continue
+        if not isinstance(state, dict) or not state.get("job_id"):
+            continue
+        jobs.append(
+            {
+                "job_id": state.get("job_id"),
+                "book_name": state.get("book_name"),
+                "class_name": state.get("class_name"),
+                "subject_name": state.get("subject_name"),
+                "subject_type": state.get("subject_type"),
+                "status": state.get("status"),
+                "stage": state.get("stage"),
+                "created_at": state.get("created_at"),
+                "updated_at": state.get("updated_at"),
+                "error": state.get("error"),
+                "minio": state.get("minio"),
+            }
+        )
+    jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return {"ok": True, "items": jobs, "count": len(jobs)}
 
 
 def get_status(job_id: str) -> dict:

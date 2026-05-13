@@ -278,8 +278,8 @@ def prepare_bundle_for_job(
             job_id,
             status=JobStatus.preparing_bundle,
             stage="preparing_bundle",
-            message="Preparing final output bundle.",
-            percent=0,
+            message="Chuẩn bị bundle cuối...",
+            percent=5,
             current=0,
             total=0,
         )
@@ -288,12 +288,28 @@ def prepare_bundle_for_job(
         _log(job_id, f"output_bundle={output_bundle}")
 
         _write_approved_chunk_metadata(job_id)
+        update_progress(
+            job_id,
+            status=JobStatus.preparing_bundle,
+            stage="copying_bundle",
+            message="Đang sao chép dữ liệu đã duyệt vào thư mục output...",
+            percent=25,
+        )
         restored_keywords = _copy_workspace_bundle(workspace_bundle, output_bundle)
         _rewrite_json_paths(output_bundle, workspace_bundle, output_bundle)
         ensure_keyword_placeholders(output_bundle)
         counts = count_bundle_artifacts(output_bundle)
         _log(job_id, f"bundle copied counts={counts} restored_keyword_files={restored_keywords}")
 
+        update_progress(
+            job_id,
+            status=JobStatus.preparing_bundle,
+            stage="validating_bundle",
+            message="Đang kiểm tra Topic/Lesson/Chunk trong bundle...",
+            percent=55,
+            current=counts["chunk_pdfs"],
+            total=counts["chunk_pdfs"],
+        )
         missing = _validate_bundle(output_bundle, book_stem)
         if missing:
             raise RuntimeError(f"Prepared bundle validation failed: {missing}")
@@ -308,7 +324,7 @@ def prepare_bundle_for_job(
                 job_id,
                 status=JobStatus.running_kaggle,
                 stage="running_kaggle",
-                message="Kaggle OCR/cutline post-processing started.",
+                message="Đang xử lý Kaggle OCR/cutline...",
                 percent=20,
                 current=0,
                 total=counts["chunk_pdfs"],
@@ -341,8 +357,8 @@ def prepare_bundle_for_job(
                 job_id,
                 status=JobStatus.extracting_keywords,
                 stage="extracting_keywords",
-                message="Keyword extraction started.",
-                percent=0,
+                message="Đang trích xuất keyword cho các chunk...",
+                percent=70,
                 current=0,
                 total=counts["chunk_pdfs"],
             )
@@ -357,6 +373,15 @@ def prepare_bundle_for_job(
             _log(job_id, "keyword extraction skipped enable_keywords=false")
 
         counts = count_bundle_artifacts(output_bundle)
+        update_progress(
+            job_id,
+            status=JobStatus.preparing_bundle,
+            stage="finalizing_bundle",
+            message="Đang ghi manifest và tổng hợp kết quả bundle...",
+            percent=90,
+            current=counts["chunk_pdfs"],
+            total=counts["chunk_pdfs"],
+        )
         missing = _validate_bundle(output_bundle, book_stem)
         if missing:
             raise RuntimeError(f"Final bundle validation failed: {missing}")
@@ -386,14 +411,14 @@ def prepare_bundle_for_job(
             job_id,
             ok=True,
             status=JobStatus.bundle_ready,
-            message="Bundle is ready.",
+            message="Bundle đã sẵn sàng.",
             data=result_data,
         )
         update_progress(
             job_id,
             status=JobStatus.bundle_ready,
             stage="bundle_ready",
-            message="Bundle is ready.",
+            message="Bundle đã sẵn sàng.",
             percent=100,
             current=counts["chunk_pdfs"],
             total=counts["chunk_pdfs"],

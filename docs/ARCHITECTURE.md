@@ -11,7 +11,8 @@ The service focuses on producing reviewable textbook artifacts:
 - final old-compatible output bundles
 - optional keyword JSON files
 - optional Kaggle OCR/cutline post-processing for existing chunk PDFs
-- MongoDB test import documents
+- Metadata-Edu MongoDB import documents
+- MinIO PDF assets for subject, topic, lesson, and chunk documents
 
 ## Why Review First
 
@@ -36,7 +37,7 @@ PDF upload
 - FastAPI pipeline service: owns job APIs, extraction orchestration, disk state, bundle preparation, and MongoDB import.
 - React review UI: debug-friendly UI for creating jobs and reviewing topics, lessons, and chunks.
 - Fake backend: separate FastAPI app that demonstrates integration through HTTP.
-- MongoDB adapter: imports final bundles into MongoDB collections for testing.
+- Metadata-Edu importer: imports final bundles into MongoDB collections and uploads PDFs to MinIO.
 - Kaggle postprocess adapter: optionally uploads the prepared bundle to Kaggle and applies request-specific processed output back into `output/{book_stem}`.
 - Disk runtime folders: `workspace/`, `output/`, and `logs/`.
 
@@ -46,7 +47,6 @@ This service currently does not implement:
 
 - PostgreSQL sync
 - Neo4j sync
-- MinIO upload
 - production worker queue
 - production authentication/authorization
 - real `full_auto` mode
@@ -63,6 +63,7 @@ flowchart LR
   API --> Kaggle[Kaggle Kernel]
   API --> Out[output/book_stem]
   API --> Mongo[(MongoDB)]
+  API --> MinIO[(MinIO data-edu)]
   WS --> Review[topics/lessons/chunks partial + approved JSON]
   Out --> Bundle[Manifest + Topic/Lesson/Chunk PDFs + JSON]
 ```
@@ -80,7 +81,7 @@ source.pdf
   -> output/{book_stem}/
   -> optional Kaggle postprocess of Chunk PDFs
   -> optional keyword extraction
-  -> MongoDB
+  -> MinIO PDFs + Metadata-Edu MongoDB documents
 ```
 
 ## Status Lifecycle
@@ -198,7 +199,10 @@ topic
 lesson
 chunk
 keyword
+keyword_alias
 chunk_keyword
+topic_bag
+asset
 import_job
 ```
 
@@ -209,11 +213,33 @@ subject.class_id -> class._id
 topic.subject_id -> subject._id
 lesson.topic_id -> topic._id
 chunk.lesson_id -> lesson._id
+asset.owner_id -> subject/topic/lesson/chunk._id
 chunk_keyword.chunk_id -> chunk._id
 chunk_keyword.keyword_id -> keyword._id
+topic_bag.topic_id -> topic._id
 ```
 
-Every imported document uses a stable `import_key` and `update_one(..., upsert=True)` for idempotency.
+Class, subject, topic, lesson, and chunk documents follow the Metadata-Edu shape with audit fields, `is_deleted`, and stable `import_key` values. Subject/topic/lesson/chunk documents store `asset_prefixes`; generated PDFs are uploaded to MinIO and represented by `asset` documents.
+
+MinIO document prefixes:
+
+```text
+documents/lop-{grade}/tin-hoc/subject
+documents/lop-{grade}/tin-hoc/topic/topic_{NN}
+documents/lop-{grade}/tin-hoc/lesson/topic_{NN}-lesson_{NN}
+documents/lop-{grade}/tin-hoc/chunk/topic_{NN}-lesson_{NN}-chunk_{NN}
+```
+
+Idempotency keys:
+
+```text
+class/subject/topic/lesson/chunk: import_key
+asset: object_key
+keyword: keyword_slug
+keyword_alias: keyword_id + alias_norm
+chunk_keyword: chunk_id + keyword_id
+topic_bag: topic_id
+```
 
 ## Gemini Key Rotation
 

@@ -203,8 +203,8 @@ def extract_chunks_for_job(job_id: str) -> None:
             job_id,
             status=JobStatus.extracting_chunks,
             stage="extracting_chunks",
-            message="Preparing chunk extraction.",
-            percent=0,
+            message="Chuẩn bị danh sách bài học đã duyệt...",
+            percent=5,
             current=0,
             total=len(approved_lessons),
         )
@@ -214,6 +214,15 @@ def extract_chunks_for_job(job_id: str) -> None:
         _rebuild_canonical_topic_lesson(job_id, bundle_dir, book_stem, source_pdf)
         lesson_pdf_count = len(list((bundle_dir / "Lesson").rglob("*.pdf")))
         _log(job_id, f"lesson_pdf_count={lesson_pdf_count}")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_chunks,
+            stage="preparing_lesson_pdfs",
+            message="Đang chuẩn bị PDF bài học để cắt chunk...",
+            percent=15,
+            current=0,
+            total=lesson_pdf_count,
+        )
 
         key_manager = GeminiKeyManager.from_env()
         if key_manager.key_count() == 0:
@@ -226,8 +235,8 @@ def extract_chunks_for_job(job_id: str) -> None:
                 job_id,
                 status=JobStatus.extracting_chunks,
                 stage="extracting_chunks",
-                message=message[:300],
-                percent=round(active["done"] * 100 / active["total"]) if active["total"] else 0,
+                message=(message[:300] or "Đang gọi Gemini trích xuất chunk..."),
+                percent=max(35, round(active["done"] * 55 / active["total"]) + 35) if active["total"] else 35,
                 current=active["done"],
                 total=active["total"],
             )
@@ -241,8 +250,8 @@ def extract_chunks_for_job(job_id: str) -> None:
                 job_id,
                 status=JobStatus.extracting_chunks,
                 stage="extracting_chunks",
-                message=f"Extracting chunks {done}/{total}: {lesson_pdf.name}",
-                percent=percent,
+                message=f"Đang cắt chunk {done}/{total}: {lesson_pdf.name}",
+                percent=min(90, max(35, round(done * 55 / total) + 35)) if total else percent,
                 current=done,
                 total=total,
             )
@@ -265,6 +274,15 @@ def extract_chunks_for_job(job_id: str) -> None:
         chunks = _collect_chunk_metas(bundle_dir, job_id)
         payload = _write_chunks_partial(job_id, chunks)
         _log(job_id, f"chunk_count={len(chunks)}")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_chunks,
+            stage="writing_chunks",
+            message="Đang ghi dữ liệu chunk...",
+            percent=90,
+            current=len(chunks),
+            total=len(chunks),
+        )
 
         state["bundle_path"] = str(bundle_dir)
         state["book_stem"] = book_stem
@@ -275,14 +293,14 @@ def extract_chunks_for_job(job_id: str) -> None:
             job_id,
             ok=True,
             status=JobStatus.reviewing_chunks,
-            message="Chunk extraction completed. Waiting for review.",
+            message="Đã trích xuất chunk, chờ duyệt.",
             data={"bundle_path": str(bundle_dir), "book_stem": book_stem, **payload},
         )
         update_progress(
             job_id,
             status=JobStatus.reviewing_chunks,
             stage="reviewing_chunks",
-            message="Chunk extraction completed. Waiting for review.",
+            message="Đã trích xuất chunk, chờ duyệt.",
             percent=100,
             current=lesson_pdf_count,
             total=lesson_pdf_count,

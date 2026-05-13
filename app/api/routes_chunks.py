@@ -29,15 +29,15 @@ def extract_chunks(job_id: str, background_tasks: BackgroundTasks):
         job_id,
         status=JobStatus.extracting_chunks,
         stage="extracting_chunks",
-        message="Chunk extraction queued.",
-        percent=0,
+        message="Đang trích xuất chunk, vui lòng chờ...",
+        percent=5,
     )
     background_tasks.add_task(extract_chunks_for_job, job_id)
     return {
         "ok": True,
         "job_id": job_id,
         "status": JobStatus.extracting_chunks,
-        "message": "Chunk extraction started",
+        "message": "Đang trích xuất chunk, vui lòng chờ...",
     }
 
 

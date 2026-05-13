@@ -27,15 +27,15 @@ def extract_topics(job_id: str, background_tasks: BackgroundTasks):
         job_id,
         status=JobStatus.extracting_topics,
         stage="extracting_topics",
-        message="Topic extraction queued.",
-        percent=0,
+        message="Đang trích xuất chủ đề, vui lòng chờ...",
+        percent=5,
     )
     background_tasks.add_task(extract_topics_for_job, job_id)
     return {
         "ok": True,
         "job_id": job_id,
         "status": JobStatus.extracting_topics,
-        "message": "Topic extraction started",
+        "message": "Đang trích xuất chủ đề, vui lòng chờ...",
     }
 
 

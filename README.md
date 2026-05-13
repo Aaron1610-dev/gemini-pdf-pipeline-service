@@ -61,7 +61,9 @@ Phase 11 adds a fake backend integration app that calls the pipeline service ove
 
 Phase 12 adds optional Kaggle OCR/cutline post-processing during prepare-bundle.
 
-This project still does not implement PostgreSQL, Neo4j, MinIO, production worker queues, or `full_auto`.
+Phase 13 maps prepared bundles to the Metadata-Edu MongoDB schema and uploads generated PDFs to MinIO.
+
+This project still does not implement PostgreSQL, Neo4j, production worker queues, or `full_auto`.
 
 ## Current Verified Status
 
@@ -221,13 +223,19 @@ http://localhost:8100/docs
 
 ## MongoDB Config
 
-Phase 10 uses MongoDB only as a local/test import target.
+MongoDB import writes to the Metadata-Edu shaped database used by the thesis demo.
 
 Recommended local development target:
 
 ```env
 MONGO_URI=mongodb://localhost:27017
 MONGO_DB_NAME=data-ai-tra-cuu
+MINIO_ENDPOINT=http://127.0.0.1:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=data-edu
+MINIO_SECURE=false
+MINIO_PUBLIC_URL=http://127.0.0.1:9000
 ```
 
 Earlier verification used `gemini_pipeline_test`; that database is not deleted or migrated automatically. MongoDB creates `data-ai-tra-cuu` automatically on the first successful insert.
@@ -789,7 +797,7 @@ For now, a keyword failure fails the prepare-bundle stage clearly and sets job s
 
 ## MongoDB Import
 
-Phase 10 imports a prepared final bundle into MongoDB:
+The import endpoint maps a prepared bundle into the Metadata-Edu schema and uploads generated PDFs to MinIO:
 
 ```text
 bundle_ready
@@ -801,6 +809,14 @@ Run import:
 
 ```bash
 curl -X POST http://localhost:8100/api/jobs/{job_id}/import-mongodb
+```
+
+Optional query params:
+
+```bash
+curl -X POST "http://localhost:8100/api/jobs/{job_id}/import-mongodb?upload_minio=true&dry_run=false"
+curl -X POST "http://localhost:8100/api/jobs/{job_id}/import-mongodb?upload_minio=false"
+curl -X POST "http://localhost:8100/api/jobs/{job_id}/import-mongodb?dry_run=true"
 ```
 
 Read import result:
@@ -817,8 +833,11 @@ subject
 topic
 lesson
 chunk
+asset
 keyword
+keyword_alias
 chunk_keyword
+topic_bag
 import_job
 ```
 
@@ -829,11 +848,22 @@ subject.class_id -> class._id
 topic.subject_id -> subject._id
 lesson.topic_id -> topic._id
 chunk.lesson_id -> lesson._id
+asset.owner_id -> subject/topic/lesson/chunk._id
 chunk_keyword.chunk_id -> chunk._id
 chunk_keyword.keyword_id -> keyword._id
+topic_bag.topic_id -> topic._id
 ```
 
-The importer is idempotent. It upserts documents by stable `import_key`, so rerunning import updates existing documents instead of duplicating them.
+The importer is idempotent. It upserts class/subject/topic/lesson/chunk by stable `import_key`, assets by `object_key`, keywords by `keyword_slug`, chunk-keyword relations by `(chunk_id, keyword_id)`, and topic bags by `topic_id`.
+
+MinIO object keys use the Metadata-Edu layout:
+
+```text
+documents/lop-{grade}/tin-hoc/subject/{book}.pdf
+documents/lop-{grade}/tin-hoc/topic/topic_{NN}/{book}_topic_{NN}.pdf
+documents/lop-{grade}/tin-hoc/lesson/topic_{NN}-lesson_{NN}/{book}_lesson_{NN}.pdf
+documents/lop-{grade}/tin-hoc/chunk/topic_{NN}-lesson_{NN}-chunk_{NN}/{book}_lesson_{NN}_chunk_{NN}.pdf
+```
 
 Keyword behavior:
 

@@ -5,6 +5,7 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from pypdf import PdfReader
 
@@ -19,6 +20,7 @@ from app.core.paths import (
     job_source_pdf_path,
     job_state_path,
     job_workspace,
+    output_root,
 )
 from app.models.job_models import JobStatus
 from app.pipeline.les_top_pipeline import run_extract_save_split
@@ -49,6 +51,14 @@ def _log(job_id: str, message: str) -> None:
 
 def _workspace_file(job_id: str, name: str) -> Path:
     return job_workspace(job_id) / name
+
+
+def _pad2(value: Any) -> str:
+    try:
+        return f"{int(value):02d}"
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(value or ""))
+        return f"{int(match.group(0)):02d}" if match else "00"
 
 
 def _log_state_files(job_id: str, label: str) -> None:
@@ -101,6 +111,93 @@ def _topics_from_partial(job_id: str) -> list[dict[str, Any]]:
     if not isinstance(topics, list):
         return []
     return [_normalize_topic_for_api(dict(topic), index) for index, topic in enumerate(topics) if isinstance(topic, dict)]
+
+
+def _topic_pdf_candidates(job_id: str, topic_num: Any, checked_paths: list[str] | None = None) -> list[Path]:
+    state_path = _workspace_file(job_id, "extraction_state.json")
+    if not state_path.exists():
+        if checked_paths is not None:
+            checked_paths.append(str(state_path))
+        return []
+    state = read_json(state_path)
+    book_stem = state.get("book_stem") or ""
+    roots: list[Path] = []
+    for key in ["bundle_path", "rebuilt_bundle_path", "final_bundle_path"]:
+        value = state.get(key)
+        if value:
+            roots.append(Path(value))
+    if book_stem:
+        roots.append(job_workspace(job_id) / book_stem)
+        roots.append(output_root() / book_stem)
+
+    topic_id = f"topic_{_pad2(topic_num)}"
+    candidates: list[Path] = []
+    for root in roots:
+        topic_root = root / "Topic"
+        direct = topic_root / topic_id
+        if checked_paths is not None:
+            checked_paths.extend([str(direct), str(topic_root / f"**/*{topic_id}*.pdf")])
+        if direct.exists():
+            candidates.extend(sorted(direct.glob("*.pdf")))
+        if topic_root.exists():
+            candidates.extend(sorted(topic_root.glob(f"**/*{topic_id}*.pdf")))
+            for meta_path in sorted(topic_root.glob("**/*.json")):
+                try:
+                    meta = read_json(meta_path)
+                except Exception:
+                    continue
+                if _topic_num_int(meta.get("topic_num")) == _topic_num_int(topic_num):
+                    candidates.extend(sorted(meta_path.parent.glob("*.pdf")))
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        resolved = path.resolve()
+        if path.exists() and resolved not in seen:
+            seen.add(resolved)
+            unique.append(path)
+    return unique
+
+
+def find_topic_preview_pdf(job_id: str, topic_num: Any) -> Path:
+    ensure_job_exists(job_id)
+    checked_paths: list[str] = []
+    candidates = _topic_pdf_candidates(job_id, topic_num, checked_paths)
+    if not candidates:
+        raise FileNotFoundError(f"No preview PDF found for topic_{_pad2(topic_num)}. Checked: {checked_paths[:12]}")
+    return candidates[0]
+
+
+def topic_preview_info(job_id: str, topic_num: Any) -> dict[str, Any]:
+    ensure_job_exists(job_id)
+    topic = next((item for item in read_topics(job_id)["topics"] if _topic_num_int(item.get("topic_num")) == _topic_num_int(topic_num)), None)
+    if topic is None:
+        raise FileNotFoundError(f"Topic {topic_num} not found.")
+    checked_paths: list[str] = []
+    candidates = _topic_pdf_candidates(job_id, topic_num, checked_paths)
+    local_available = bool(candidates)
+    asset_object_key = topic.get("asset_object_key")
+    payload = {
+        "ok": True,
+        "job_id": job_id,
+        "topic_num": topic.get("topic_num"),
+        "topic_name": topic.get("topic_name"),
+        "local_preview_available": local_available,
+        "local_preview_url": f"/api/jobs/{job_id}/topics/{topic_num}/preview" if local_available else None,
+        "local_preview_path": str(candidates[0]) if local_available else None,
+        "minio_available": bool(topic.get("asset_url") or asset_object_key),
+        "asset_url": topic.get("asset_url"),
+        "direct_minio_url": topic.get("asset_url"),
+        "backend_preview_url": f"/api/assets/preview?object_key={quote(asset_object_key, safe='')}" if asset_object_key else None,
+        "asset_object_key": asset_object_key,
+        "object_key": asset_object_key,
+        "approved": bool(topic.get("approved")),
+        "metadata_edu_saved": bool(topic.get("metadata_edu_saved")),
+        "minio_uploaded": bool(topic.get("minio_uploaded")),
+    }
+    if not local_available:
+        payload["checked_paths"] = checked_paths[:20]
+    return payload
 
 
 def _normalize_approved_topics_payload(job_id: str) -> dict[str, Any]:

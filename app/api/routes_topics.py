@@ -1,7 +1,10 @@
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
+from fastapi.responses import FileResponse, Response
 
+from app.api.routes_assets import asset_head_response, validate_object_key, _stream_minio_object
+from app.core.config import get_settings
 from app.models.job_models import FutureEndpointResponse
 from app.models.job_models import JobStatus
 from app.models.topic_models import TopicListPayload
@@ -11,8 +14,10 @@ from app.services.topic_service import (
     approve_topic as approve_single_topic_for_job,
     approve_topics as approve_topics_for_job,
     extract_topics_for_job,
+    find_topic_preview_pdf,
     read_topics,
     save_topics,
+    topic_preview_info,
 )
 
 router = APIRouter(prefix="/api/jobs", tags=["topics"])
@@ -56,6 +61,60 @@ def update_topics(job_id: str, payload: TopicListPayload):
         job_id,
         [topic.model_dump(mode="json", exclude_none=True) for topic in payload.topics],
     )
+
+
+@router.get("/{job_id}/topics/{topic_num}/preview")
+def preview_topic_pdf(job_id: str, topic_num: int):
+    try:
+        pdf_path = find_topic_preview_pdf(job_id, topic_num)
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=pdf_path.name,
+            content_disposition_type="inline",
+        )
+    except FileNotFoundError as exc:
+        try:
+            info = topic_preview_info(job_id, topic_num)
+            object_key = info.get("asset_object_key")
+            if object_key:
+                safe_key = validate_object_key(object_key)
+                return _stream_minio_object(get_settings().minio_bucket, safe_key)
+        except FileNotFoundError:
+            pass
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.head("/{job_id}/topics/{topic_num}/preview")
+def head_topic_pdf(job_id: str, topic_num: int):
+    try:
+        pdf_path = find_topic_preview_pdf(job_id, topic_num)
+        return Response(
+            status_code=status.HTTP_200_OK,
+            headers={
+                "Content-Type": "application/pdf",
+                "Content-Length": str(pdf_path.stat().st_size),
+                "Content-Disposition": f'inline; filename="{pdf_path.name}"',
+            },
+        )
+    except FileNotFoundError as exc:
+        try:
+            info = topic_preview_info(job_id, topic_num)
+            object_key = info.get("asset_object_key")
+            if object_key:
+                safe_key = validate_object_key(object_key)
+                return asset_head_response(get_settings().minio_bucket, safe_key)
+        except FileNotFoundError:
+            pass
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{job_id}/topics/{topic_num}/preview-info")
+def get_topic_preview_info(job_id: str, topic_num: int):
+    try:
+        return topic_preview_info(job_id, topic_num)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/{job_id}/topics/approve")

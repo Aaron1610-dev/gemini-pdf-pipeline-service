@@ -63,6 +63,22 @@ export function getTopics(jobId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/topics`);
 }
 
+export function getTopicPreviewUrl(jobId, topicNum) {
+  return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/topics/${encodeURIComponent(topicNum)}/preview`;
+}
+
+export function getAssetPreviewUrl(objectKey) {
+  return `${API_BASE_URL}/api/assets/preview?object_key=${encodeURIComponent(objectKey)}`;
+}
+
+export function getSourcePreviewUrl(jobId) {
+  return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/source/preview`;
+}
+
+export function getTopicPreviewInfo(jobId, topicNum) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/topics/${encodeURIComponent(topicNum)}/preview-info`);
+}
+
 export function saveTopics(jobId, topics) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/topics`, {
     method: "PUT",

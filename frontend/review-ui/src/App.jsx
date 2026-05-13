@@ -22,6 +22,7 @@ import {
   getLessons,
   getLogs,
   getMongoImportResult,
+  getSourcePreviewUrl,
   getStatus,
   getTopics,
   health,
@@ -531,14 +532,29 @@ export default function App() {
                   <dt>Job ID</dt><dd className="mono">{shortJobId}</dd>
                   <dt>Cập nhật</dt><dd>{job.updated_at || status?.updated_at || "-"}</dd>
                 </dl>
+                <div className="sourcePreviewActions">
+                  <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
+                    Xem sách gốc
+                  </button>
+                </div>
                 {job?.minio?.subject_asset_uploaded ? (
                   <details className="minioDetails">
                     <summary>Sách đã được tải lên MinIO</summary>
                     <dl className="summaryGrid">
                       <dt>Bucket</dt><dd>{job.minio.bucket || "ai-tra-cuu"}</dd>
                       <dt>Object key</dt><dd className="mono breakText">{job.minio.subject_object_key || "-"}</dd>
-                      <dt>URL</dt><dd className="mono breakText">{job.minio.subject_url || "-"}</dd>
+                      <dt>Backend preview</dt>
+                      <dd>
+                        <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
+                          Xem qua backend
+                        </button>
+                      </dd>
                     </dl>
+                    <details className="advancedMinioUrl">
+                      <summary>Nâng cao</summary>
+                      <p className="muted">URL MinIO trực tiếp có thể bị AccessDenied vì bucket đang private.</p>
+                      <p className="mono breakText">{job.minio.subject_url || "-"}</p>
+                    </details>
                   </details>
                 ) : null}
               </section> : null}
@@ -555,6 +571,7 @@ export default function App() {
 
               {activeStep === WORKFLOW_STEPS.topics ? (
                 <TopicReviewView
+                  jobId={selectedJobId}
                   topics={topics}
                   approved={topicsApproved}
                   loading={actionLoading}

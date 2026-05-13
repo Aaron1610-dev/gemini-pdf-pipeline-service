@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -39,6 +40,39 @@ def build_public_url(bucket: str, object_key: str) -> str:
     public_url = get_settings().minio_public_url.rstrip("/")
     encoded_key = quote(object_key, safe="/")
     return f"{public_url}/{bucket}/{encoded_key}"
+
+
+def object_exists(bucket: str, object_key: str) -> bool:
+    try:
+        stat_object(bucket, object_key)
+        return True
+    except Exception as exc:
+        code = getattr(exc, "code", "")
+        if code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+            return False
+        raise
+
+
+def stat_object(bucket: str, object_key: str):
+    client = get_minio_client()
+    return client.stat_object(bucket, object_key)
+
+
+def get_object_stream(bucket: str, object_key: str):
+    client = get_minio_client()
+    return client.get_object(bucket, object_key)
+
+
+def infer_content_type(object_key: str, fallback: str = "application/octet-stream") -> str:
+    guessed, _ = mimetypes.guess_type(object_key)
+    return guessed or fallback
+
+
+def get_presigned_url(bucket: str, object_key: str, expires_seconds: int = 3600) -> str:
+    from datetime import timedelta
+
+    client = get_minio_client()
+    return client.presigned_get_object(bucket, object_key, expires=timedelta(seconds=expires_seconds))
 
 
 def upload_file(

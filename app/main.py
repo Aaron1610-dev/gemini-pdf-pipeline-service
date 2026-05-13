@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    routes_assets,
     routes_bundle,
     routes_chunks,
     routes_debug,
@@ -37,6 +38,7 @@ app.add_middleware(
 
 app.include_router(routes_health.router)
 app.include_router(routes_debug.router)
+app.include_router(routes_assets.router)
 app.include_router(routes_jobs.router)
 app.include_router(routes_logs.router)
 app.include_router(routes_topics.router)

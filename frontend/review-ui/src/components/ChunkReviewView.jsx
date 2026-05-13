@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
+import { getChunkPreviewUrl, getSourcePreviewUrl } from "../api/reviewApi.js";
 import EmptyState from "./EmptyState.jsx";
 import ErrorState from "./ErrorState.jsx";
 import LoadingState from "./LoadingState.jsx";
-
-const COLUMNS = ["chunk_num", "chunk_name", "start", "end"];
+import SplitPdfReview from "./SplitPdfReview.jsx";
 
 function groupsFrom(chunks, groupedByLesson) {
   if (Array.isArray(groupedByLesson) && groupedByLesson.length) return groupedByLesson;
@@ -16,7 +16,20 @@ function groupsFrom(chunks, groupedByLesson) {
   return Array.from(map.values());
 }
 
+function chunkStatus(chunk) {
+  if (chunk?.metadata_edu_saved || chunk?.minio_uploaded) return { label: "Đã lưu MongoDB/MinIO", tone: "done" };
+  if (chunk?.kaggle_finalized) return { label: "Đã finalize sau Kaggle", tone: "done" };
+  if (chunk?.waiting_for_kaggle || chunk?.approved) return { label: "Đã duyệt, chờ Kaggle", tone: "warning" };
+  return { label: "Chờ duyệt", tone: "pending" };
+}
+
+function pad2(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? String(parsed).padStart(2, "0") : String(value || "--");
+}
+
 export default function ChunkReviewView({
+  jobId,
   chunks,
   groupedByLesson,
   approved,
@@ -42,6 +55,11 @@ export default function ChunkReviewView({
   const [addForm, setAddForm] = useState({ chunk_num: "", chunk_name: "", title: "", heading: "", start: 1, end: 1, content_head: false });
   const selectedGroup = groups[Math.min(selectedGroupIndex, Math.max(groups.length - 1, 0))] || { chunks: [] };
   const selectedChunk = selectedGroup.chunks.find((chunk) => (chunk.chunk_id || chunk.id) === selectedChunkId) || selectedGroup.chunks[0] || null;
+  const selectedChunkIndex = selectedChunk ? safeChunks.findIndex((item) => item === selectedChunk || item.chunk_id === selectedChunk.chunk_id || item.id === selectedChunk.id) : -1;
+  const approvedCount = safeChunks.filter((chunk) => chunk.approved || chunk.waiting_for_kaggle || chunk.kaggle_finalized || chunk.metadata_edu_saved).length;
+  const selectedChunkPreviewId = selectedChunk ? (selectedChunk.chunk_id || selectedChunk.id) : "";
+  const sourcePreviewUrl = jobId ? getSourcePreviewUrl(jobId) : "";
+  const chunkPreviewUrl = jobId && selectedChunkPreviewId ? getChunkPreviewUrl(jobId, selectedChunkPreviewId) : "";
 
   function chunkId(chunk, index) {
     return chunk.chunk_id || chunk.id || `${chunk.lesson_stem || "lesson"}:${chunk.chunk_num || index}`;
@@ -49,6 +67,10 @@ export default function ChunkReviewView({
 
   function updateAdd(field, value) {
     setAddForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateSelected(field, value) {
+    if (selectedChunkIndex >= 0) onChange(selectedChunkIndex, field, value);
   }
 
   async function submitAdd(event) {
@@ -64,143 +86,163 @@ export default function ChunkReviewView({
   }
 
   return (
-    <section className="panel reviewCard">
-      <div className="panelHeader">
+    <section className="panel reviewCard chunkReviewWorkspace">
+      <div className="topicReviewHeader">
         <div>
           <span className="stepLabel">Bước 4</span>
           <h2>Bước 4: Duyệt chunk</h2>
-          <p className="muted">Kiểm tra các đoạn nội dung nhỏ được cắt từ từng bài học.</p>
+          <p className="muted">Duyệt các chunk tạm. Chunk sẽ chỉ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.</p>
+        </div>
+        <div className="topicHeaderActions">
+          <button type="button" onClick={onExtract} disabled={loading}>Trích xuất chunk</button>
+          <button type="button" className="secondary-action" onClick={onLoad} disabled={loading}>Tải lại</button>
         </div>
       </div>
       <div className="summaryCards">
         <div className="summaryCard"><span>Tổng chunk</span><strong>{safeChunks.length}</strong></div>
-        <div className="summaryCard"><span>Nhóm bài học</span><strong>{groups.length}</strong></div>
-        <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Đã duyệt" : "Chưa duyệt"}</strong></div>
+        <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}/{safeChunks.length}</strong></div>
+        <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Chờ Kaggle" : "Chờ duyệt"}</strong></div>
       </div>
-      <p className="infoNote">Chunk chỉ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.</p>
-      <div className="actionBar">
-        <button type="button" onClick={onExtract} disabled={loading}>Trích xuất chunk</button>
-        <button type="button" onClick={onLoad} disabled={loading}>Tải danh sách chunk</button>
-        <button type="button" onClick={onSave} disabled={loading || approved || safeChunks.length === 0}>Lưu chunk</button>
-        <button type="button" className="primaryButton" onClick={onApprove} disabled={loading || approved || safeChunks.length === 0}>Duyệt và sang bước hoàn tất</button>
-      </div>
+      <p className="infoNote">Chunk đã duyệt vẫn là dữ liệu tạm cho tới khi bước Kaggle và finalize hoàn tất.</p>
       {loading ? <LoadingState message="Đang tải chunks..." /> : null}
       {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
-      {!loading && !error && chunks == null ? <EmptyState message="Chưa có dữ liệu chunk. Approve lessons trước khi trích xuất chunks." /> : null}
+      {!loading && !error && chunks == null ? <EmptyState message="Chưa có dữ liệu chunk. Hãy duyệt bài học trước khi trích xuất chunk." /> : null}
       {!loading && !error && chunks != null && safeChunks.length === 0 ? <EmptyState message="Danh sách chunk đang trống." /> : null}
       {groups.length > 0 ? (
-        <div className="reviewThreeColumn">
-          <aside className="reviewSideList">
-            <h3>Lesson</h3>
+        <div className="review-workspace">
+          <aside className="review-navigator">
+            <div className="cardHeaderCompact">
+              <h3>Chunk Navigator</h3>
+              <span>{groups.length} lesson</span>
+            </div>
             {groups.map((group, groupIndex) => (
-              <button
-                type="button"
-                key={`${group.lesson_stem}-${groupIndex}`}
-                className={`sideListItem ${selectedGroupIndex === groupIndex ? "active" : ""}`}
-                onClick={() => {
-                  setSelectedGroupIndex(groupIndex);
-                  setSelectedChunkId("");
-                }}
-              >
-                <strong>{group.lesson_num ? `Lesson ${group.lesson_num}` : "Lesson"}</strong>
-                <span>{group.lesson_name || group.lesson_stem || "-"}</span>
-                <small>{group.chunks?.length || 0} chunk</small>
-              </button>
+              <div className="navigatorGroup" key={`${group.lesson_stem}-${groupIndex}`}>
+                <div className="navigatorGroupTitle">
+                  <strong>{group.lesson_num ? `Lesson ${pad2(group.lesson_num)}` : "Lesson"}</strong>
+                  <span>{group.chunks?.length || 0} chunk</span>
+                </div>
+                {(group.chunks || []).map((chunk, localIndex) => {
+                  const id = chunkId(chunk, localIndex);
+                  const status = chunkStatus(chunk);
+                  return (
+                    <button
+                      type="button"
+                      key={id}
+                      className={`review-list-item ${selectedChunk && chunkId(selectedChunk, localIndex) === id ? "review-list-item-active" : ""}`}
+                      onClick={() => {
+                        setSelectedGroupIndex(groupIndex);
+                        setSelectedChunkId(id);
+                      }}
+                    >
+                      <strong>Chunk {pad2(chunk.chunk_num)}</strong>
+                      <span>{chunk.chunk_name || chunk.title || "-"}</span>
+                      <small>Trang {chunk.start || "-"}-{chunk.end || "-"}</small>
+                      <em className={`status-chip ${status.tone}`}>{status.label}</em>
+                    </button>
+                  );
+                })}
+              </div>
             ))}
           </aside>
 
-          <div className="reviewGroup">
-              <h3>{selectedGroup.lesson_num ? `Lesson ${selectedGroup.lesson_num}` : "Lesson"}: {selectedGroup.lesson_name || selectedGroup.lesson_stem || "-"}</h3>
-              <div className="tableWrap">
-                <table className="reviewTable chunkReviewTable">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Trạng thái</th>
-                      {COLUMNS.map((column) => <th key={column}>{column}</th>)}
-                      <th>Hành động</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(selectedGroup.chunks || []).map((chunk, localIndex) => {
-                      const globalIndex = safeChunks.findIndex((item) => item === chunk || item.chunk_id === chunk.chunk_id || item.id === chunk.id);
-                      const id = chunkId(chunk, localIndex);
-                      return (
-                        <tr key={id} className={selectedChunk && chunkId(selectedChunk, localIndex) === id ? "selectedRow" : ""} onClick={() => setSelectedChunkId(id)}>
-                          <td>{localIndex + 1}</td>
-                          <td>
-                            <span className={`inlineStatus ${chunk.kaggle_finalized ? "done" : chunk.waiting_for_kaggle ? "pending" : ""}`}>
-                              {chunk.kaggle_finalized ? "Đã lưu MongoDB/MinIO" : chunk.waiting_for_kaggle ? "Chờ Kaggle" : chunk.approved ? "Đã duyệt" : "Chưa duyệt"}
-                            </span>
-                          </td>
-                          {COLUMNS.map((column) => (
-                            <td key={column}>
-                              {column === "content_head" ? (
-                                <input type="checkbox" checked={Boolean(chunk[column])} disabled={approved} onChange={(event) => onChange(globalIndex, column, event.target.checked)} />
-                              ) : (
-                                <input
-                                  type={column === "start" || column === "end" ? "number" : "text"}
-                                  value={chunk[column] ?? ""}
-                                  disabled={approved}
-                                  onChange={(event) => onChange(globalIndex, column, column === "start" || column === "end" ? Number(event.target.value) : event.target.value)}
-                                />
-                              )}
-                            </td>
-                          ))}
-                          <td className="rowActions">
-                            <button type="button" onClick={() => onApproveChunk?.(chunk)} disabled={loading || chunk.approved}>
-                              Duyệt chunk này
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            <div className="advancedTools">
-              <button type="button" className="linkButton" onClick={() => setToolsOpen((value) => !value)}>
-                {toolsOpen ? "Ẩn công cụ nâng cao" : "Công cụ nâng cao"}
-              </button>
-              {toolsOpen ? (
-                <form className="addChunkForm" onSubmit={submitAdd}>
-                  <h3>Thêm chunk</h3>
-                  <div className="addChunkGrid">
-                    <input placeholder="chunk_num" value={addForm.chunk_num} onChange={(event) => updateAdd("chunk_num", event.target.value)} />
-                    <input placeholder="chunk_name" value={addForm.chunk_name} onChange={(event) => updateAdd("chunk_name", event.target.value)} />
-                    <input placeholder="title" value={addForm.title} onChange={(event) => updateAdd("title", event.target.value)} />
-                    <input placeholder="heading" value={addForm.heading} onChange={(event) => updateAdd("heading", event.target.value)} />
-                    <input type="number" placeholder="start" value={addForm.start} onChange={(event) => updateAdd("start", event.target.value)} />
-                    <input type="number" placeholder="end" value={addForm.end} onChange={(event) => updateAdd("end", event.target.value)} />
-                    <label className="checkboxRow">
-                      <input type="checkbox" checked={addForm.content_head} onChange={(event) => updateAdd("content_head", event.target.checked)} />
-                      <span>content_head</span>
-                    </label>
-                  </div>
-                  <button type="submit" disabled={loading || approved || !onAdd}>Thêm chunk</button>
-                </form>
-              ) : null}
-            </div>
-          </div>
-
-          <aside className="reviewDetail">
-            <h3>Chi tiết chunk</h3>
+          <SplitPdfReview
+            title="Đối chiếu bản gốc và bản cắt"
+            description="Sách giáo khoa gốc ở bên trái, chunk đã trích xuất ở bên phải."
+            sourcePreviewUrl={sourcePreviewUrl}
+            extractedPreviewUrl={chunkPreviewUrl}
+            sourceLabel="Sách giáo khoa gốc"
+            extractedLabel="Chunk đã trích xuất"
+            sourcePageHint="Bản PDF nguồn của phiên duyệt"
+            extractedPageHint={selectedChunk ? `${selectedChunk.chunk_name || selectedChunk.title || "Chunk"} · Trang ${selectedChunk.start || "-"}-${selectedChunk.end || "-"}` : ""}
+            extractedStatusBadge={selectedChunk ? <span className={`status-chip ${chunkStatus(selectedChunk).tone}`}>{chunkStatus(selectedChunk).label}</span> : null}
+            missingExtractedMessage="Preview chunk chưa sẵn sàng."
+          >
+            <section className="review-editor">
+              <h3>Metadata chunk</h3>
             {selectedChunk ? (
               <>
-                <dl className="statusGrid">
-                  <dt>Chunk</dt><dd>{selectedChunk.chunk_name || selectedChunk.title || "-"}</dd>
-                  <dt>Lesson</dt><dd>{selectedChunk.lesson_num || selectedChunk.lesson_name || "-"}</dd>
-                  <dt>Trang</dt><dd>{selectedChunk.start} - {selectedChunk.end}</dd>
-                </dl>
-                {toolsOpen ? <div className="buttonRow">
-                  <button type="button" disabled={loading || approved || !onDelete} onClick={() => onDelete(selectedChunk.chunk_id || selectedChunk.id)}>Xóa chunk</button>
-                  <button type="button" disabled={loading || approved || !onRecut} onClick={() => onRecut(selectedChunk)}>Cắt lại chunk</button>
-                </div> : null}
+                <div className="metadataForm">
+                  <label>
+                    <span>Số chunk</span>
+                    <input value={selectedChunk.chunk_num ?? ""} disabled={approved} onChange={(event) => updateSelected("chunk_num", event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Tên chunk</span>
+                    <input value={selectedChunk.chunk_name ?? ""} disabled={approved} onChange={(event) => updateSelected("chunk_name", event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Tiêu đề</span>
+                    <input value={selectedChunk.title ?? ""} disabled={approved} onChange={(event) => updateSelected("title", event.target.value)} />
+                  </label>
+                  <div className="twoColumn">
+                    <label>
+                      <span>Trang bắt đầu</span>
+                      <input type="number" value={selectedChunk.start ?? ""} disabled={approved} onChange={(event) => updateSelected("start", Number(event.target.value))} />
+                    </label>
+                    <label>
+                      <span>Trang kết thúc</span>
+                      <input type="number" value={selectedChunk.end ?? ""} disabled={approved} onChange={(event) => updateSelected("end", Number(event.target.value))} />
+                    </label>
+                  </div>
+                  <label className="checkboxRow">
+                    <input type="checkbox" checked={Boolean(selectedChunk.content_head)} disabled={approved} onChange={(event) => updateSelected("content_head", event.target.checked)} />
+                    <span>content_head</span>
+                  </label>
+                </div>
+                {selectedChunk.approved || selectedChunk.waiting_for_kaggle ? (
+                  <div className="warningBox inlineNotice">Chunk đã duyệt và đang chờ Kaggle xử lý trước khi lưu chính thức.</div>
+                ) : null}
+                {selectedChunk.metadata_edu_saved || selectedChunk.minio_uploaded ? (
+                  <div className="successBox">Đã lưu chunk vào MongoDB/MinIO.</div>
+                ) : null}
+                <div className="approvalActions">
+                  <button type="button" className="primaryButton primary-action" onClick={() => onApproveChunk?.(selectedChunk)} disabled={loading || selectedChunk.approved}>
+                    Duyệt chunk này
+                  </button>
+                </div>
               </>
             ) : <p className="muted">Chưa chọn chunk.</p>}
-          </aside>
+            </section>
+          </SplitPdfReview>
         </div>
       ) : null}
+
+      <div className="advancedActions">
+        <button type="button" className="linkButton" onClick={() => setToolsOpen((value) => !value)}>
+          {toolsOpen ? "Ẩn công cụ nâng cao" : "Công cụ nâng cao"}
+        </button>
+        {toolsOpen ? (
+          <div className="advancedBox">
+            <div className="actionBar">
+              <button type="button" onClick={onSave} disabled={loading || approved || safeChunks.length === 0}>Lưu chỉnh sửa chunk</button>
+              <button type="button" className="primaryButton" onClick={onApprove} disabled={loading || approved || safeChunks.length === 0}>Duyệt tất cả chunk</button>
+              {selectedChunk ? (
+                <>
+                  <button type="button" disabled={loading || approved || !onDelete} onClick={() => onDelete(selectedChunk.chunk_id || selectedChunk.id)}>Xóa chunk</button>
+                  <button type="button" disabled={loading || approved || !onRecut} onClick={() => onRecut(selectedChunk)}>Cắt lại chunk</button>
+                </>
+              ) : null}
+            </div>
+            <form className="addChunkForm" onSubmit={submitAdd}>
+              <h3>Thêm chunk</h3>
+              <div className="addChunkGrid">
+                <input placeholder="chunk_num" value={addForm.chunk_num} onChange={(event) => updateAdd("chunk_num", event.target.value)} />
+                <input placeholder="chunk_name" value={addForm.chunk_name} onChange={(event) => updateAdd("chunk_name", event.target.value)} />
+                <input placeholder="title" value={addForm.title} onChange={(event) => updateAdd("title", event.target.value)} />
+                <input placeholder="heading" value={addForm.heading} onChange={(event) => updateAdd("heading", event.target.value)} />
+                <input type="number" placeholder="start" value={addForm.start} onChange={(event) => updateAdd("start", event.target.value)} />
+                <input type="number" placeholder="end" value={addForm.end} onChange={(event) => updateAdd("end", event.target.value)} />
+                <label className="checkboxRow">
+                  <input type="checkbox" checked={addForm.content_head} onChange={(event) => updateAdd("content_head", event.target.checked)} />
+                  <span>content_head</span>
+                </label>
+              </div>
+              <button type="submit" disabled={loading || approved || !onAdd}>Thêm chunk</button>
+            </form>
+          </div>
+        ) : null}
+      </div>
+
       <div className="wizardNav">
         <button type="button" onClick={onBack}>Quay lại</button>
         <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục hoàn tất</button>

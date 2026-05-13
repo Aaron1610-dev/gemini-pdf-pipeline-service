@@ -25,7 +25,7 @@ export default function JobList({ jobs, selectedJobId, loading, onSelect, onRefr
       <div className="panelHeader">
         <div>
           <h2>Danh sách sách / Jobs</h2>
-          <p className="muted">{safeJobs.length} job trong workspace</p>
+          <p className="muted">{safeJobs.length} phiên duyệt gần đây</p>
         </div>
         <button type="button" onClick={onRefresh} disabled={loading}>
           Làm mới
@@ -35,7 +35,7 @@ export default function JobList({ jobs, selectedJobId, loading, onSelect, onRefr
         className="searchInput"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="Tìm theo tên sách hoặc job_id..."
+        placeholder="Tìm theo tên sách, môn học hoặc mã phiên..."
       />
       {loading ? <LoadingState message="Đang tải danh sách sách/job..." /> : null}
       {!loading && safeJobs.length === 0 ? (
@@ -54,7 +54,7 @@ export default function JobList({ jobs, selectedJobId, loading, onSelect, onRefr
               onClick={() => onSelect(job.job_id)}
             >
               <span className="jobTitle">{job.book_name || "Chưa đặt tên sách"}</span>
-              <span className="jobSubline">Section {job.class_name || "-"} / {job.subject_name || "-"}</span>
+              <span className="jobSubline">Section {job.class_name || "-"} · {job.subject_name || "-"} · {job.subject_type || "-"}</span>
               <span className="mono smallText">{shortId(job.job_id)}</span>
               <span className="jobMeta">
                 <JobStatusBadge status={job.status} />

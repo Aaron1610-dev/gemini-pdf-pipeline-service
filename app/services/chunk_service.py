@@ -10,7 +10,7 @@ from pypdf import PdfReader
 from app.core.config import get_settings
 from app.core.gemini_keys import GeminiKeyManager
 from app.core.logging import append_job_log
-from app.core.paths import job_config_path, job_log_path, job_workspace
+from app.core.paths import job_config_path, job_log_path, job_workspace, output_root
 from app.models.job_models import JobStatus
 from app.pipeline.chunk_pipeline import (
     _compute_chunks_from_start_head,
@@ -468,6 +468,76 @@ def read_chunks(job_id: str) -> dict[str, Any]:
         chunks = _extract_items(raw, "chunks")
         return {"ok": True, "job_id": job_id, "approved": False, "chunks": chunks, "grouped_by_lesson": raw.get("grouped_by_lesson") or _group_chunks(chunks), "raw": raw}
     raise FileNotFoundError("No chunks found for this job.")
+
+
+def _preview_roots(job_id: str) -> list[Path]:
+    state_path = _workspace_file(job_id, "extraction_state.json")
+    state = read_json(state_path) if state_path.exists() else {}
+    roots: list[Path] = []
+    for key in ["final_bundle_path", "bundle_path", "rebuilt_bundle_path"]:
+        value = state.get(key)
+        if value:
+            roots.append(Path(value))
+    book_stem = state.get("book_stem") or ""
+    if book_stem:
+        roots.append(job_workspace(job_id) / book_stem)
+        roots.append(output_root() / book_stem)
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for root in roots:
+        resolved = root.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(root)
+    return unique
+
+
+def _chunk_matches(meta: dict[str, Any], chunk_id: str) -> bool:
+    candidates = {
+        str(meta.get("chunk_id") or ""),
+        str(meta.get("id") or ""),
+        str(meta.get("chunk") or ""),
+        str(meta.get("chunk_num") or ""),
+        f"{meta.get('lesson_stem') or ''}:{meta.get('chunk') or meta.get('chunk_num') or ''}",
+    }
+    return chunk_id in candidates
+
+
+def find_chunk_preview_pdf(job_id: str, chunk_id: str) -> Path:
+    ensure_job_exists(job_id)
+    chunks = read_chunks(job_id).get("chunks", [])
+    target = next((chunk for chunk in chunks if str(chunk.get("chunk_id") or chunk.get("id")) == str(chunk_id)), None)
+    if target:
+        for key in ["pdf_path", "chunk_pdf", "final_pdf_path"]:
+            value = target.get(key)
+            if value and Path(value).exists():
+                return Path(value)
+    checked: list[str] = []
+    for root in _preview_roots(job_id):
+        chunk_root = root / "Chunk"
+        checked.append(str(chunk_root))
+        if not chunk_root.exists():
+            continue
+        for meta_path in sorted(chunk_root.glob("**/*.json")):
+            if meta_path.name.endswith(".keywords.json"):
+                continue
+            try:
+                meta = read_json(meta_path)
+            except Exception:
+                continue
+            if _chunk_matches(meta, str(chunk_id)):
+                for key in ["pdf_path", "chunk_pdf", "final_pdf_path"]:
+                    value = meta.get(key)
+                    if value and Path(value).exists():
+                        return Path(value)
+                candidates = sorted(meta_path.parent.glob("*.pdf"))
+                if candidates:
+                    return candidates[0]
+        safe_tail = str(chunk_id).split(":", 1)[-1]
+        candidates = sorted(chunk_root.glob(f"**/*{safe_tail}*.pdf"))
+        if candidates:
+            return candidates[0]
+    raise FileNotFoundError(f"Chunk preview PDF not found for chunk_id={chunk_id}. Checked: {checked[:12]}")
 
 
 def save_chunks(job_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:

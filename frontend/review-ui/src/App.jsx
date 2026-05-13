@@ -462,20 +462,45 @@ export default function App() {
     setActiveStep(order[Math.min(order.length - 1, index + 1)]);
   }
 
+  function canEnterStep(step) {
+    if (step === WORKFLOW_STEPS.upload || step === WORKFLOW_STEPS.topics) return true;
+    if (step === WORKFLOW_STEPS.lessons) return topicsApproved || Array.isArray(lessons);
+    if (step === WORKFLOW_STEPS.chunks) return lessonsApproved || Array.isArray(chunks);
+    if (step === WORKFLOW_STEPS.bundle) return chunksApproved || Boolean(bundleResult || mongoResult);
+    return false;
+  }
+
+  function changeStep(step) {
+    setDetailsError("");
+    if (!selectedJobId && step !== WORKFLOW_STEPS.upload) {
+      setDetailsError("Bạn cần chọn hoặc tạo một phiên duyệt trước khi tiếp tục.");
+      return;
+    }
+    if (!canEnterStep(step)) {
+      setDetailsError("Bạn cần duyệt bước hiện tại trước khi tiếp tục.");
+      return;
+    }
+    setActiveStep(step);
+  }
+
   return (
-    <div className="appShell">
-      <header className="topBar">
-        <div className="brandBlock">
-          <span className="brandEyebrow">KLTN Demo Dashboard</span>
-          <h1>AI Tra Cứu - Review-first PDF Pipeline</h1>
-          <p>Duyệt cấu trúc sách giáo khoa theo Chủ đề → Bài học → Chunk</p>
+    <div className="appShell review-shell">
+      <header className="topBar review-header">
+        <div className="brandBlock review-brand">
+          <h1>AI Tra Cứu</h1>
+          <p>Duyệt cấu trúc sách giáo khoa theo Topic → Lesson → Chunk</p>
+        </div>
+        <div className="headerStepper">
+          <ReviewStepper status={selectedStatus} activeStep={activeStep} onStepChange={changeStep} />
         </div>
         <div className="headerActions">
-          <span className="apiBase mono">{API_BASE_URL}</span>
           <button type="button" className={`healthBadge ${backendOk ? "ok" : "down"}`} onClick={checkHealth}>
             Backend: {backendOk ? "OK" : healthError ? "Không kết nối được" : "Đang kiểm tra..."}
           </button>
           {selectedStatus ? <JobStatusBadge status={selectedStatus} /> : null}
+          <button type="button" className="secondary-action" onClick={() => setDebugOpen((value) => !value)}>
+            {debugOpen ? "Đóng debug" : "Mở debug"}
+          </button>
         </div>
       </header>
 
@@ -483,13 +508,13 @@ export default function App() {
       {successMessage ? <div className="successBanner">{successMessage}</div> : null}
       {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang trích xuất, vui lòng chờ..." /> : null}
 
-      <main className="focusShell">
-        {activeStep === WORKFLOW_STEPS.upload ? (
-          <section className="uploadStepGrid">
-            <div className="introPanel panel">
-              <span className="stepLabel">Bước 1</span>
-              <h2>Chọn hoặc tải sách giáo khoa</h2>
-              <p>Khởi tạo tài liệu PDF, sau đó hệ thống sẽ dẫn qua từng bước duyệt Chủ đề, Bài học, Chunk và hoàn tất import.</p>
+      <main className="focusShell review-main">
+        {!selectedJobId || activeStep === WORKFLOW_STEPS.upload ? (
+          <section className="uploadStepGrid uploadLanding">
+            <div className="introPanel panel thesisIntro">
+              <span className="stepLabel">Phiên duyệt học thuật</span>
+              <h2>Chuẩn hoá metadata sách giáo khoa</h2>
+              <p>Chọn sách, xem bản PDF đã cắt, chỉnh metadata và lưu từng cấp dữ liệu vào Metadata-Edu.</p>
             </div>
             <BookUploadForm onUploaded={afterUpload} />
             <div>
@@ -498,13 +523,26 @@ export default function App() {
             </div>
           </section>
         ) : (
-          <div className="focusToolbar">
-            <button type="button" onClick={() => setActiveStep(WORKFLOW_STEPS.upload)}>Đổi sách / Chọn job khác</button>
-            {job ? <span className="focusJobTitle">{job.book_name || "Tài liệu chưa đặt tên"} · {shortJobId}</span> : null}
+          <div className="focusToolbar currentReviewBar">
+            <button type="button" className="secondary-action" onClick={() => setActiveStep(WORKFLOW_STEPS.upload)}>Đổi sách</button>
+            {job ? (
+              <div className="book-summary-card">
+                <div className="source-book-thumbnail" aria-label="Sách gốc">
+                  <iframe src={getSourcePreviewUrl(selectedJobId)} title="Sách gốc" />
+                </div>
+                <div className="currentDocument">
+                  <strong>{job.book_name || "Tài liệu chưa đặt tên"}</strong>
+                  <span>Section {job.class_name || "-"} · {job.subject_name || "-"} · {job.subject_type || "-"} · {shortJobId}</span>
+                </div>
+              </div>
+            ) : null}
+            <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
+              Xem sách gốc
+            </button>
           </div>
         )}
 
-        {activeStep !== WORKFLOW_STEPS.upload ? <section className="contentArea">
+        {selectedJobId && activeStep !== WORKFLOW_STEPS.upload ? <section className="contentArea">
           {!selectedJobId && !jobsLoading ? (
             <EmptyState title="Chưa chọn job" message="Upload hoặc chọn một sách/job ở danh sách bên trái để bắt đầu review." />
           ) : null}
@@ -514,61 +552,6 @@ export default function App() {
 
           {selectedJobId && job && !detailsLoading ? (
             <>
-              {activeStep !== WORKFLOW_STEPS.upload ? <section className="panel jobSummary">
-                <div className="panelHeader">
-                  <div>
-                    <h2>{job.book_name || "Tài liệu chưa đặt tên"}</h2>
-                    <p className="muted">Chọn một bước để duyệt dữ liệu trước khi tạo bundle và import.</p>
-                  </div>
-                  <JobStatusBadge status={selectedStatus} />
-                </div>
-                <ReviewStepper status={selectedStatus} activeStep={activeStep} onStepChange={setActiveStep} />
-                <dl className="summaryGrid">
-                  <dt>Tài liệu</dt><dd>{job.book_name || "-"}</dd>
-                  <dt>Section</dt><dd>{job.class_name || "-"}</dd>
-                  <dt>Môn học</dt><dd>{job.subject_name || "-"}</dd>
-                  <dt>Bộ sách</dt><dd>{job.subject_type || "-"}</dd>
-                  <dt>Trạng thái</dt><dd>{selectedStatus || "-"}</dd>
-                  <dt>Job ID</dt><dd className="mono">{shortJobId}</dd>
-                  <dt>Cập nhật</dt><dd>{job.updated_at || status?.updated_at || "-"}</dd>
-                </dl>
-                <div className="sourcePreviewActions">
-                  <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
-                    Xem sách gốc
-                  </button>
-                </div>
-                {job?.minio?.subject_asset_uploaded ? (
-                  <details className="minioDetails">
-                    <summary>Sách đã được tải lên MinIO</summary>
-                    <dl className="summaryGrid">
-                      <dt>Bucket</dt><dd>{job.minio.bucket || "ai-tra-cuu"}</dd>
-                      <dt>Object key</dt><dd className="mono breakText">{job.minio.subject_object_key || "-"}</dd>
-                      <dt>Backend preview</dt>
-                      <dd>
-                        <button type="button" onClick={() => window.open(getSourcePreviewUrl(selectedJobId), "_blank", "noopener,noreferrer")}>
-                          Xem qua backend
-                        </button>
-                      </dd>
-                    </dl>
-                    <details className="advancedMinioUrl">
-                      <summary>Nâng cao</summary>
-                      <p className="muted">URL MinIO trực tiếp có thể bị AccessDenied vì bucket đang private.</p>
-                      <p className="mono breakText">{job.minio.subject_url || "-"}</p>
-                    </details>
-                  </details>
-                ) : null}
-              </section> : null}
-
-              {activeStep === WORKFLOW_STEPS.upload ? (
-                <section className="panel stepIntro">
-                  <span className="stepLabel">Bước 1</span>
-                  <h2>Tải hoặc chọn tài liệu</h2>
-                  <p>
-                    Dùng khung bên trái để tạo job mới từ file PDF hoặc chọn một job đã có. Sau đó chuyển sang bước Chủ đề để bắt đầu quy trình duyệt review-first.
-                  </p>
-                </section>
-              ) : null}
-
               {activeStep === WORKFLOW_STEPS.topics ? (
                 <TopicReviewView
                   jobId={selectedJobId}
@@ -579,14 +562,14 @@ export default function App() {
                   onChange={(index, field, value) => updateItem(setTopics, index, field, value)}
                   onLoad={loadTopics}
                   onExtract={() => runAction(() => extractTopics(selectedJobId), {
-                    loadingMessage: "Đang trích xuất, vui lòng chờ...",
-                    success: "Đang trích xuất chủ đề. Theo dõi tiến độ bên trên.",
+                    loadingMessage: "Đang trích xuất chủ đề...",
+                    success: "Đang trích xuất chủ đề. Theo dõi tiến độ trong debug khi cần.",
                     reload: async () => startPolling(),
                     onError: setTopicsError,
                   })}
-                  onSave={() => runAction(() => saveTopics(selectedJobId, topics || []), { success: "Đã lưu topics.", reload: loadTopics, onError: setTopicsError })}
+                  onSave={() => runAction(() => saveTopics(selectedJobId, topics || []), { success: "Đã lưu chỉnh sửa.", reload: loadTopics, onError: setTopicsError })}
                   onApproveAll={() => runAction(() => approveTopics(selectedJobId, topics || []), {
-                    success: "Đã duyệt toàn bộ chủ đề.",
+                    success: "Đã lưu toàn bộ chủ đề.",
                     reload: loadTopics,
                     onError: setTopicsError,
                   })}
@@ -616,6 +599,7 @@ export default function App() {
 
               {activeStep === WORKFLOW_STEPS.lessons ? (
                 <LessonReviewView
+                  jobId={selectedJobId}
                   lessons={lessons}
                   groupedByTopic={groupedLessons}
                   selectedTopicNum={selectedTopicNum}
@@ -625,14 +609,14 @@ export default function App() {
                   onChange={(index, field, value) => updateItem(setLessons, index, field, value)}
                   onLoad={loadLessons}
                   onExtract={() => runAction(() => extractLessons(selectedJobId), {
-                    loadingMessage: "Đang trích xuất, vui lòng chờ...",
-                    success: "Đang trích xuất bài học. Theo dõi tiến độ bên trên.",
+                    loadingMessage: "Đang trích xuất bài học...",
+                    success: "Đang trích xuất bài học.",
                     reload: async () => startPolling(),
                     onError: setLessonsError,
                   })}
-                  onSave={() => runAction(() => saveLessons(selectedJobId, lessons || []), { success: "Đã lưu lessons.", reload: loadLessons, onError: setLessonsError })}
+                  onSave={() => runAction(() => saveLessons(selectedJobId, lessons || []), { success: "Đã lưu chỉnh sửa bài học.", reload: loadLessons, onError: setLessonsError })}
                   onApprove={() => runAction(() => approveLessons(selectedJobId, lessons || []), {
-                    success: "Đã duyệt bài học. Tiếp tục trích xuất chunk.",
+                    success: "Đã lưu metadata bài học. Tiếp tục trích xuất chunk.",
                     reload: async () => {
                       await loadLessons();
                       setActiveStep(WORKFLOW_STEPS.chunks);
@@ -640,7 +624,7 @@ export default function App() {
                     onError: setLessonsError,
                   })}
                   onApproveLesson={(lesson) => runAction(() => approveLesson(selectedJobId, lesson.lesson_num), {
-                    success: `Đã duyệt Lesson ${String(lesson.lesson_num).padStart(2, "0")} và lưu MongoDB/MinIO.`,
+                    success: `Đã lưu Lesson ${String(lesson.lesson_num).padStart(2, "0")} vào MongoDB/MinIO.`,
                     reload: loadLessons,
                     onError: setLessonsError,
                   })}
@@ -663,6 +647,7 @@ export default function App() {
 
               {activeStep === WORKFLOW_STEPS.chunks ? (
                 <ChunkReviewView
+                  jobId={selectedJobId}
                   chunks={chunks}
                   groupedByLesson={groupedChunks}
                   approved={chunksApproved}
@@ -671,12 +656,12 @@ export default function App() {
                   onChange={(index, field, value) => updateItem(setChunks, index, field, value)}
                   onLoad={loadChunks}
                   onExtract={() => runAction(() => extractChunks(selectedJobId), {
-                    loadingMessage: "Đang trích xuất, vui lòng chờ...",
-                    success: "Đang trích xuất chunk. Theo dõi tiến độ bên trên.",
+                    loadingMessage: "Đang trích xuất chunk...",
+                    success: "Đang trích xuất chunk.",
                     reload: async () => startPolling(),
                     onError: setChunksError,
                   })}
-                  onSave={() => runAction(() => saveChunks(selectedJobId, chunks || []), { success: "Đã lưu chunks.", reload: loadChunks, onError: setChunksError })}
+                  onSave={() => runAction(() => saveChunks(selectedJobId, chunks || []), { success: "Đã lưu chỉnh sửa chunk.", reload: loadChunks, onError: setChunksError })}
                   onApprove={() => runAction(() => approveChunks(selectedJobId, chunks || []), {
                     success: "Đã duyệt chunk. Chunk sẽ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.",
                     reload: async () => {
@@ -728,20 +713,30 @@ export default function App() {
             </>
           ) : null}
         </section> : null}
-
-        <section className={`debugDrawer ${debugOpen ? "open" : ""}`}>
-          <button type="button" className="debugToggle" onClick={() => setDebugOpen((value) => !value)}>
-            {debugOpen ? "Ẩn debug" : "Mở debug"}
-          </button>
-          {debugOpen ? (
-            <div className="debugArea">
-              <StatusPanel job={job} status={status} />
-              <LogPanel log={logs} onRefresh={loadLogs} loading={actionLoading} />
-              <RawJsonPanel title="JSON gốc" data={rawData} open={rawOpen} onToggle={() => setRawOpen((value) => !value)} />
-            </div>
-          ) : null}
-        </section>
       </main>
+
+      <aside className={`debugDrawer debug-drawer ${debugOpen ? "open" : ""}`}>
+        <div className="debugDrawerHeader">
+          <div>
+            <strong>Debug phiên duyệt</strong>
+            <span className="mono">{selectedJobId || "Chưa chọn job"}</span>
+          </div>
+          <button type="button" onClick={() => setDebugOpen(false)}>Đóng</button>
+        </div>
+        <div className="debugArea">
+          <section className="panel inspectorCard">
+            <h3>Liên kết nguồn</h3>
+            <dl className="statusGrid">
+              <dt>Backend</dt><dd className="mono breakText">{API_BASE_URL}</dd>
+              <dt>Source</dt><dd className="mono breakText">{selectedJobId ? getSourcePreviewUrl(selectedJobId) : "-"}</dd>
+              <dt>Object key</dt><dd className="mono breakText">{job?.minio?.subject_object_key || "-"}</dd>
+            </dl>
+          </section>
+          <StatusPanel job={job} status={status} />
+          <LogPanel log={logs} onRefresh={loadLogs} loading={actionLoading} />
+          <RawJsonPanel title="JSON gốc" data={rawData} open={rawOpen} onToggle={() => setRawOpen((value) => !value)} />
+        </div>
+      </aside>
     </div>
   );
 }

@@ -19,42 +19,56 @@ export default function BundleView({
   const assetCounts = bundleResult?.assets || bundleResult?.asset_counts || {};
 
   return (
-    <section className="panel reviewCard">
-      <div className="panelHeader">
+    <section className="panel reviewCard finishWorkspace">
+      <div className="topicReviewHeader">
         <div>
           <span className="stepLabel">Bước 5</span>
           <h2>Bước 5: Hoàn tất dữ liệu</h2>
           <p className="muted">Chạy Kaggle, lưu chunk cuối, trích xuất keyword và hoàn tất dữ liệu.</p>
         </div>
-        <div className="actionBar compact">
-          <button type="button" className="primaryButton" onClick={onPrepareFast} disabled={loading}>Tạo bundle nhanh</button>
-          <button type="button" className="primaryButton" onClick={onImportMongo} disabled={loading}>Import MongoDB</button>
-          <button type="button" onClick={onViewMongo} disabled={loading}>Xem kết quả import</button>
-        </div>
+        <button type="button" className="primaryButton primary-action" onClick={onPrepare} disabled={loading}>Chạy xử lý hoàn tất</button>
       </div>
-      <button type="button" className="linkButton" onClick={() => setAdvancedOpen((value) => !value)}>
-        {advancedOpen ? "Ẩn tuỳ chọn nâng cao" : "Tuỳ chọn nâng cao"}
-      </button>
-      {advancedOpen ? (
-        <div className="actionBar advancedActionBar">
-          <button type="button" onClick={onPrepare} disabled={loading}>Tạo bundle có Kaggle</button>
-          <button type="button" onClick={onFinalizeChunks} disabled={loading}>Lưu chunk cuối sau Kaggle</button>
-          <button type="button" onClick={onViewBundle} disabled={loading}>Xem bundle</button>
-          <button type="button" onClick={onDownloadBundle} disabled={loading}>Tải ZIP bundle</button>
-        </div>
-      ) : null}
 
       <div className="bundleGrid">
         <div className="bundleBlock">
-          <h3>Bundle</h3>
+          <h3>Kaggle OCR/cutline</h3>
+          <p className="muted">Xử lý cutline và chuẩn bị dữ liệu chunk cuối.</p>
+          <button type="button" onClick={onPrepare} disabled={loading}>Chạy Kaggle và lưu chunk cuối</button>
+        </div>
+
+        <div className="bundleBlock">
+          <h3>Lưu chunk cuối vào MongoDB/MinIO</h3>
+          <p className="muted">Finalize chunk sau khi dữ liệu Kaggle sẵn sàng.</p>
+          <button type="button" onClick={onFinalizeChunks} disabled={loading}>Lưu chunk cuối</button>
+        </div>
+
+        <div className="bundleBlock">
+          <h3>Keyword extraction</h3>
+          <p className="muted">Keyword được chạy trong bước hoàn tất khi cấu hình bật.</p>
+          <button type="button" onClick={onViewBundle} disabled={loading}>Xem thống kê keyword</button>
+        </div>
+
+        <div className="bundleBlock">
+          <h3>MongoDB summary</h3>
+          <p className="muted">Kiểm tra kết quả lưu metadata cuối cùng.</p>
+          <div className="buttonRow">
+            <button type="button" className="primaryButton" onClick={onImportMongo} disabled={loading}>Lưu metadata</button>
+            <button type="button" onClick={onViewMongo} disabled={loading}>Xem kết quả lưu MongoDB</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bundleGrid resultGrid">
+        <div className="bundleBlock">
+          <h3>Thống kê dữ liệu</h3>
           <dl className="statusGrid">
             <dt>Trạng thái</dt>
             <dd>{bundleResult?.status || "-"}</dd>
-            <dt>Chủ đề</dt>
+            <dt>Chủ đề đã lưu</dt>
             <dd>{bundleCounts.topics ?? bundleCounts.topic_count ?? "-"}</dd>
-            <dt>Bài học</dt>
+            <dt>Bài học đã lưu</dt>
             <dd>{bundleCounts.lessons ?? bundleCounts.lesson_count ?? "-"}</dd>
-            <dt>Chunk</dt>
+            <dt>Chunk chờ Kaggle</dt>
             <dd>{bundleCounts.chunks ?? bundleCounts.chunk_count ?? "-"}</dd>
             <dt>Chunk đã lưu sau Kaggle</dt>
             <dd>{bundleResult?.chunk_finalize_summary?.counts?.chunk_count ?? bundleResult?.data?.chunk_finalize_summary?.counts?.chunk_count ?? "-"}</dd>
@@ -77,7 +91,7 @@ export default function BundleView({
         </div>
 
         <div className="bundleBlock">
-          <h3>MongoDB import</h3>
+          <h3>Kết quả lưu metadata</h3>
           <dl className="statusGrid">
             <dt>Trạng thái</dt>
             <dd>{mongoResult?.status || "-"}</dd>
@@ -88,6 +102,20 @@ export default function BundleView({
           </dl>
           {Object.keys(mongoCounts).length ? <CountGrid counts={mongoCounts} /> : <p className="muted">Chưa có kết quả import.</p>}
         </div>
+      </div>
+
+      <div className="advancedActions">
+        <button type="button" className="linkButton" onClick={() => setAdvancedOpen((value) => !value)}>
+          {advancedOpen ? "Ẩn tuỳ chọn nâng cao" : "Tuỳ chọn nâng cao"}
+        </button>
+        {advancedOpen ? (
+          <div className="actionBar advancedActionBar">
+            <button type="button" onClick={onPrepareFast} disabled={loading}>Tạo bundle nhanh bỏ qua Kaggle/keyword</button>
+            <button type="button" onClick={onViewBundle} disabled={loading}>Xem bundle</button>
+            <button type="button" onClick={onDownloadBundle} disabled={loading}>Tải ZIP bundle</button>
+            <button type="button" onClick={onFinalizeChunks} disabled={loading}>Finalize chunk debug</button>
+          </div>
+        ) : null}
       </div>
       <div className="wizardNav">
         <button type="button" onClick={onBack}>Quay lại</button>

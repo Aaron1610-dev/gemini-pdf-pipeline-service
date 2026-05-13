@@ -9,7 +9,7 @@ from typing import Any
 from pypdf import PdfReader, PdfWriter
 
 from app.core.logging import append_job_log
-from app.core.paths import job_config_path, job_log_path, job_workspace
+from app.core.paths import job_config_path, job_log_path, job_workspace, output_root
 from app.models.job_models import JobStatus
 from app.services.job_service import ensure_job_exists, update_job_state
 from app.services.lesson_metadata_service import save_lesson_metadata_for_job
@@ -705,6 +705,60 @@ def read_lessons(job_id: str) -> dict[str, Any]:
             "raw": raw,
         }
     raise FileNotFoundError("No lessons found for this job.")
+
+
+def _lesson_num_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group(0)) if match else None
+
+
+def _preview_roots(job_id: str) -> list[Path]:
+    state_path = _workspace_file(job_id, "extraction_state.json")
+    state = read_json(state_path) if state_path.exists() else {}
+    roots: list[Path] = []
+    for key in ["bundle_path", "rebuilt_bundle_path", "final_bundle_path"]:
+        value = state.get(key)
+        if value:
+            roots.append(Path(value))
+    book_stem = state.get("book_stem") or ""
+    if book_stem:
+        roots.append(job_workspace(job_id) / book_stem)
+        roots.append(output_root() / book_stem)
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for root in roots:
+        resolved = root.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(root)
+    return unique
+
+
+def find_lesson_preview_pdf(job_id: str, lesson_num: Any) -> Path:
+    ensure_job_exists(job_id)
+    wanted = _lesson_num_int(lesson_num)
+    checked: list[str] = []
+    for root in _preview_roots(job_id):
+        lesson_root = root / "Lesson"
+        folder = lesson_root / f"lesson_{int(wanted or 0):02d}"
+        checked.append(str(folder))
+        candidates = sorted(folder.glob("*.pdf")) if folder.exists() else []
+        if wanted is not None and lesson_root.exists():
+            candidates.extend(sorted(lesson_root.glob(f"**/*lesson_{wanted:02d}*.pdf")))
+            for meta_path in sorted(lesson_root.glob("**/*.json")):
+                try:
+                    meta = read_json(meta_path)
+                except Exception:
+                    continue
+                if _lesson_num_int(meta.get("lesson_num")) == wanted:
+                    candidates.extend(sorted(meta_path.parent.glob("*.pdf")))
+        for pdf in candidates:
+            if pdf.exists():
+                return pdf
+    raise FileNotFoundError(f"Lesson preview PDF not found for lesson_{lesson_num}. Checked: {checked[:12]}")
 
 
 def _lesson_num_set(values: list[Any] | None) -> set[int]:

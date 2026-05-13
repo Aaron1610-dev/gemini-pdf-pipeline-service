@@ -64,15 +64,15 @@ export default function BookUploadForm({ onUploaded }) {
     <section className="panel uploadCard">
       <div className="panelHeader">
         <div>
-          <h2>Tải sách PDF</h2>
-          <p className="muted">Tạo job review-first cho sách giáo khoa.</p>
+          <h2>Tải sách giáo khoa</h2>
+          <p className="muted">Tạo phiên duyệt metadata theo quy trình Topic, Lesson và Chunk.</p>
         </div>
       </div>
       <form className="formGrid" onSubmit={submit}>
         <label className="fileDrop">
           <span className="fileDropIcon">PDF</span>
           <strong>{file ? file.name : "Chọn hoặc kéo thả file PDF"}</strong>
-          <small>Sau khi tạo job, hệ thống sẽ cho phép duyệt lần lượt Chủ đề, Bài học và Chunk.</small>
+          <small>Sau khi tạo phiên, sách được lưu riêng tư và xem qua backend preview.</small>
           <input type="file" accept="application/pdf,.pdf" onChange={(event) => setFile(event.target.files?.[0] || null)} />
         </label>
         <label>
@@ -108,9 +108,9 @@ export default function BookUploadForm({ onUploaded }) {
           </label>
         </div>
         {error ? <div className="inlineError">{error}</div> : null}
-        {createdJobId ? <div className="successBox">Sách đã được tải lên MinIO. Job: <span className="mono">{createdJobId}</span></div> : null}
-        <button className="primaryButton" type="submit" disabled={loading}>
-          {loading ? "Đang tạo job..." : "Tạo job duyệt sách"}
+        {createdJobId ? <div className="successBox">Sách đã được tải lên MinIO bucket ai-tra-cuu và sẵn sàng trích xuất chủ đề. Job: <span className="mono">{createdJobId}</span></div> : null}
+        <button className="primaryButton primary-action" type="submit" disabled={loading}>
+          {loading ? "Đang tạo phiên duyệt..." : "Tạo phiên duyệt"}
         </button>
       </form>
     </section>

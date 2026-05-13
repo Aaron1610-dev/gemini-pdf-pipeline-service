@@ -1,7 +1,10 @@
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, status
+from fastapi.responses import FileResponse, Response
 
+from app.api.routes_assets import asset_head_response, validate_object_key, _stream_minio_object
+from app.core.config import get_settings
 from app.models.chunk_models import ChunkAddPayload, ChunkListPayload, ChunkRecutPayload
 from app.models.job_models import JobStatus
 from app.services.chunk_service import (
@@ -12,6 +15,7 @@ from app.services.chunk_service import (
     ensure_chunk_preconditions,
     extract_chunks_for_job,
     extract_chunks_for_lesson,
+    find_chunk_preview_pdf,
     read_chunks,
     recut_chunk,
     save_chunks,
@@ -93,6 +97,50 @@ def update_chunks(job_id: str, payload: ChunkListPayload):
         job_id,
         [chunk.model_dump(mode="json", exclude_none=True) for chunk in payload.chunks],
     )
+
+
+def _chunk_asset_key(job_id: str, chunk_id: str) -> str | None:
+    try:
+        chunks = read_chunks(job_id).get("chunks", [])
+    except FileNotFoundError:
+        return None
+    for chunk in chunks:
+        if str(chunk.get("chunk_id") or chunk.get("id")) == str(chunk_id):
+            return chunk.get("asset_object_key")
+    return None
+
+
+@router.get("/{job_id}/chunks/{chunk_id}/preview")
+def preview_chunk_pdf(job_id: str, chunk_id: str):
+    try:
+        pdf_path = find_chunk_preview_pdf(job_id, chunk_id)
+        return FileResponse(path=pdf_path, media_type="application/pdf", filename=pdf_path.name, content_disposition_type="inline")
+    except FileNotFoundError as exc:
+        object_key = _chunk_asset_key(job_id, chunk_id)
+        if object_key:
+            safe_key = validate_object_key(object_key)
+            return _stream_minio_object(get_settings().minio_bucket, safe_key)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.head("/{job_id}/chunks/{chunk_id}/preview")
+def head_chunk_pdf(job_id: str, chunk_id: str):
+    try:
+        pdf_path = find_chunk_preview_pdf(job_id, chunk_id)
+        return Response(
+            status_code=status.HTTP_200_OK,
+            headers={
+                "Content-Type": "application/pdf",
+                "Content-Length": str(pdf_path.stat().st_size),
+                "Content-Disposition": f'inline; filename="{pdf_path.name}"',
+            },
+        )
+    except FileNotFoundError as exc:
+        object_key = _chunk_asset_key(job_id, chunk_id)
+        if object_key:
+            safe_key = validate_object_key(object_key)
+            return asset_head_response(get_settings().minio_bucket, safe_key)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/{job_id}/chunks/add")

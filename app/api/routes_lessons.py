@@ -1,7 +1,10 @@
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
+from fastapi.responses import FileResponse, Response
 
+from app.api.routes_assets import asset_head_response, validate_object_key, _stream_minio_object
+from app.core.config import get_settings
 from app.models.job_models import JobStatus
 from app.models.lesson_models import LessonListPayload
 from app.services.job_service import update_job_state
@@ -11,6 +14,7 @@ from app.services.lesson_service import (
     ensure_lesson_preconditions,
     extract_lessons_for_job,
     extract_lessons_for_topic,
+    find_lesson_preview_pdf,
     read_lessons,
     save_lessons,
 )
@@ -95,6 +99,50 @@ def update_lessons(job_id: str, payload: LessonListPayload):
         job_id,
         [lesson.model_dump(mode="json", exclude_none=True) for lesson in payload.lessons],
     )
+
+
+def _lesson_asset_key(job_id: str, lesson_num: int) -> str | None:
+    try:
+        lessons = read_lessons(job_id).get("lessons", [])
+    except FileNotFoundError:
+        return None
+    for lesson in lessons:
+        if str(lesson.get("lesson_num")) == str(lesson_num):
+            return lesson.get("asset_object_key")
+    return None
+
+
+@router.get("/{job_id}/lessons/{lesson_num}/preview")
+def preview_lesson_pdf(job_id: str, lesson_num: int):
+    try:
+        pdf_path = find_lesson_preview_pdf(job_id, lesson_num)
+        return FileResponse(path=pdf_path, media_type="application/pdf", filename=pdf_path.name, content_disposition_type="inline")
+    except FileNotFoundError as exc:
+        object_key = _lesson_asset_key(job_id, lesson_num)
+        if object_key:
+            safe_key = validate_object_key(object_key)
+            return _stream_minio_object(get_settings().minio_bucket, safe_key)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.head("/{job_id}/lessons/{lesson_num}/preview")
+def head_lesson_pdf(job_id: str, lesson_num: int):
+    try:
+        pdf_path = find_lesson_preview_pdf(job_id, lesson_num)
+        return Response(
+            status_code=status.HTTP_200_OK,
+            headers={
+                "Content-Type": "application/pdf",
+                "Content-Length": str(pdf_path.stat().st_size),
+                "Content-Disposition": f'inline; filename="{pdf_path.name}"',
+            },
+        )
+    except FileNotFoundError as exc:
+        object_key = _lesson_asset_key(job_id, lesson_num)
+        if object_key:
+            safe_key = validate_object_key(object_key)
+            return asset_head_response(get_settings().minio_bucket, safe_key)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/{job_id}/lessons/approve")

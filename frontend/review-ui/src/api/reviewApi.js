@@ -75,6 +75,14 @@ export function getSourcePreviewUrl(jobId) {
   return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/source/preview`;
 }
 
+export function getLessonPreviewUrl(jobId, lessonNum) {
+  return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/lessons/${encodeURIComponent(lessonNum)}/preview`;
+}
+
+export function getChunkPreviewUrl(jobId, chunkId) {
+  return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/chunks/${encodeURIComponent(chunkId)}/preview`;
+}
+
 export function getTopicPreviewInfo(jobId, topicNum) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/topics/${encodeURIComponent(topicNum)}/preview-info`);
 }

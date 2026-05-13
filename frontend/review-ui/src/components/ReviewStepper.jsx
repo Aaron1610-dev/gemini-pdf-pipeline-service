@@ -1,12 +1,11 @@
 const STEPS = [
-  { key: "upload", label: "Tải sách", description: "Đã tạo job", statuses: ["uploaded"] },
-  { key: "topics", label: "Chủ đề", description: "Duyệt mục lục", statuses: ["extracting_topics", "reviewing_topics"] },
-  { key: "lessons", label: "Bài học", description: "Duyệt bài", statuses: ["extracting_lessons", "reviewing_lessons"] },
-  { key: "chunks", label: "Chunk", description: "Duyệt đoạn", statuses: ["extracting_chunks", "reviewing_chunks"] },
+  { key: "upload", label: "Tải sách", statuses: ["uploaded"] },
+  { key: "topics", label: "Chủ đề", statuses: ["extracting_topics", "reviewing_topics"] },
+  { key: "lessons", label: "Bài học", statuses: ["extracting_lessons", "reviewing_lessons"] },
+  { key: "chunks", label: "Chunk", statuses: ["extracting_chunks", "reviewing_chunks"] },
   {
     key: "bundle",
-    label: "Bundle / MongoDB",
-    description: "Import cuối",
+    label: "Hoàn tất",
     statuses: ["preparing_bundle", "running_kaggle", "extracting_keywords", "bundle_ready", "importing_mongodb", "mongodb_imported"],
   },
 ];
@@ -21,7 +20,7 @@ function progressIndex(status) {
 export default function ReviewStepper({ status, activeStep = "upload", onStepChange }) {
   const progress = progressIndex(status);
   return (
-    <ol className="stepper" aria-label="Pipeline stages">
+    <ol className="stepper review-stepper" aria-label="Các bước duyệt metadata">
       {STEPS.map((step, index) => {
         const isSelected = activeStep === step.key;
         const state = status === "error" && isSelected ? "error" : isSelected ? "active" : index < progress ? "done" : "pending";
@@ -31,7 +30,6 @@ export default function ReviewStepper({ status, activeStep = "upload", onStepCha
             <span className="stepDot">{index + 1}</span>
             <span className="stepText">
               <strong>{step.label}</strong>
-              <small>{step.description}</small>
             </span>
             </button>
           </li>

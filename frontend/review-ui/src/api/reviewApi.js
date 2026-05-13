@@ -79,8 +79,18 @@ export function approveTopics(jobId, topics) {
   });
 }
 
+export function approveTopic(jobId, topicNum) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/topics/${encodeURIComponent(topicNum)}/approve`, {
+    method: "POST",
+  });
+}
+
 export function extractLessons(jobId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/extract/lessons`, { method: "POST" });
+}
+
+export function extractLessonsForTopic(jobId, topicNum) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/topics/${encodeURIComponent(topicNum)}/extract-lessons`, { method: "POST" });
 }
 
 export function getLessons(jobId) {
@@ -103,8 +113,16 @@ export function approveLessons(jobId, lessons) {
   });
 }
 
+export function approveLesson(jobId, lessonNum) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/lessons/${encodeURIComponent(lessonNum)}/approve`, { method: "POST" });
+}
+
 export function extractChunks(jobId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/extract/chunks`, { method: "POST" });
+}
+
+export function extractChunksForLesson(jobId, lessonNum) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/lessons/${encodeURIComponent(lessonNum)}/extract-chunks`, { method: "POST" });
 }
 
 export function getChunks(jobId) {
@@ -147,6 +165,17 @@ export function approveChunks(jobId, chunks) {
     headers: chunks ? { "Content-Type": "application/json" } : undefined,
     body: chunks ? JSON.stringify({ chunks }) : undefined,
   });
+}
+
+export function approveChunk(jobId, chunkId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/chunks/${encodeURIComponent(chunkId)}/approve`, { method: "POST" });
+}
+
+export function finalizeChunksAfterKaggle(jobId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.force_without_kaggle) params.set("force_without_kaggle", "true");
+  const query = params.toString();
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/chunks/finalize-after-kaggle${query ? `?${query}` : ""}`, { method: "POST" });
 }
 
 export function prepareBundle(jobId, options = {}) {

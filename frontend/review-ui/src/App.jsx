@@ -2,14 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
   addChunk,
+  approveChunk,
   approveChunks,
+  approveLesson,
   approveLessons,
+  approveTopic,
   approveTopics,
   deleteChunk,
   downloadBundle,
   extractChunks,
+  extractChunksForLesson,
   extractLessons,
+  extractLessonsForTopic,
   extractTopics,
+  finalizeChunksAfterKaggle,
   getBundle,
   getChunks,
   getJob,
@@ -69,10 +75,12 @@ export default function App() {
   const [topics, setTopics] = useState(null);
   const [topicsApproved, setTopicsApproved] = useState(false);
   const [topicsError, setTopicsError] = useState("");
+  const [selectedTopicNum, setSelectedTopicNum] = useState("");
   const [lessons, setLessons] = useState(null);
   const [groupedLessons, setGroupedLessons] = useState([]);
   const [lessonsApproved, setLessonsApproved] = useState(false);
   const [lessonsError, setLessonsError] = useState("");
+  const [selectedLessonNum, setSelectedLessonNum] = useState("");
   const [chunks, setChunks] = useState(null);
   const [groupedChunks, setGroupedChunks] = useState([]);
   const [chunksApproved, setChunksApproved] = useState(false);
@@ -197,10 +205,12 @@ export default function App() {
     setTopics(null);
     setTopicsApproved(false);
     setTopicsError("");
+    setSelectedTopicNum("");
     setLessons(null);
     setGroupedLessons([]);
     setLessonsApproved(false);
     setLessonsError("");
+    setSelectedLessonNum("");
     setChunks(null);
     setGroupedChunks([]);
     setChunksApproved(false);
@@ -558,14 +568,30 @@ export default function App() {
                     onError: setTopicsError,
                   })}
                   onSave={() => runAction(() => saveTopics(selectedJobId, topics || []), { success: "Đã lưu topics.", reload: loadTopics, onError: setTopicsError })}
-                  onApprove={() => runAction(() => approveTopics(selectedJobId, topics || []), {
-                    success: "Đã duyệt chủ đề. Tiếp tục trích xuất bài học.",
+                  onApproveAll={() => runAction(() => approveTopics(selectedJobId, topics || []), {
+                    success: "Đã duyệt toàn bộ chủ đề.",
+                    reload: loadTopics,
+                    onError: setTopicsError,
+                  })}
+                  onApproveTopic={(topic) => runAction(() => approveTopic(selectedJobId, topic.topic_num), {
+                    success: `Đã lưu Topic ${String(topic.topic_num).padStart(2, "0")} vào MongoDB và MinIO.`,
                     reload: async () => {
                       await loadTopics();
-                      setActiveStep(WORKFLOW_STEPS.lessons);
                     },
                     onError: setTopicsError,
                   })}
+                  onExtractLessonsForTopic={(topic) => {
+                    setSelectedTopicNum(String(topic.topic_num || ""));
+                    return runAction(() => extractLessonsForTopic(selectedJobId, topic.topic_num), {
+                      loadingMessage: `Đang trích xuất bài học cho Topic ${String(topic.topic_num).padStart(2, "0")}...`,
+                      success: `Đang trích xuất bài học cho Topic ${String(topic.topic_num).padStart(2, "0")}.`,
+                      reload: async () => {
+                        setActiveStep(WORKFLOW_STEPS.lessons);
+                        startPolling();
+                      },
+                      onError: setTopicsError,
+                    });
+                  }}
                   onBack={goBack}
                   onNext={goNext}
                 />
@@ -575,6 +601,7 @@ export default function App() {
                 <LessonReviewView
                   lessons={lessons}
                   groupedByTopic={groupedLessons}
+                  selectedTopicNum={selectedTopicNum}
                   approved={lessonsApproved}
                   loading={actionLoading}
                   error={lessonsError}
@@ -595,6 +622,23 @@ export default function App() {
                     },
                     onError: setLessonsError,
                   })}
+                  onApproveLesson={(lesson) => runAction(() => approveLesson(selectedJobId, lesson.lesson_num), {
+                    success: `Đã duyệt Lesson ${String(lesson.lesson_num).padStart(2, "0")} và lưu MongoDB/MinIO.`,
+                    reload: loadLessons,
+                    onError: setLessonsError,
+                  })}
+                  onExtractChunksForLesson={(lesson) => {
+                    setSelectedLessonNum(String(lesson.lesson_num || ""));
+                    return runAction(() => extractChunksForLesson(selectedJobId, lesson.lesson_num), {
+                      loadingMessage: `Đang trích xuất chunk cho Lesson ${String(lesson.lesson_num).padStart(2, "0")}...`,
+                      success: `Đang trích xuất chunk cho Lesson ${String(lesson.lesson_num).padStart(2, "0")}.`,
+                      reload: async () => {
+                        setActiveStep(WORKFLOW_STEPS.chunks);
+                        startPolling();
+                      },
+                      onError: setLessonsError,
+                    });
+                  }}
                   onBack={goBack}
                   onNext={goNext}
                 />
@@ -617,11 +661,16 @@ export default function App() {
                   })}
                   onSave={() => runAction(() => saveChunks(selectedJobId, chunks || []), { success: "Đã lưu chunks.", reload: loadChunks, onError: setChunksError })}
                   onApprove={() => runAction(() => approveChunks(selectedJobId, chunks || []), {
-                    success: "Đã duyệt chunk. Có thể tạo bundle cuối.",
+                    success: "Đã duyệt chunk. Chunk sẽ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.",
                     reload: async () => {
                       await loadChunks();
                       setActiveStep(WORKFLOW_STEPS.bundle);
                     },
+                    onError: setChunksError,
+                  })}
+                  onApproveChunk={(chunk) => runAction(() => approveChunk(selectedJobId, chunk.chunk_id || chunk.id), {
+                    success: "Chunk đã duyệt. Chunk sẽ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.",
+                    reload: loadChunks,
                     onError: setChunksError,
                   })}
                   onAdd={(payload) => runAction(() => addChunk(selectedJobId, payload), { success: "Đã thêm chunk.", reload: loadChunks, onError: setChunksError })}
@@ -652,6 +701,10 @@ export default function App() {
                   onDownloadBundle={() => downloadBundle(selectedJobId)}
                   onImportMongo={importMongoAction}
                   onViewMongo={viewMongoResult}
+                  onFinalizeChunks={() => runAction(() => finalizeChunksAfterKaggle(selectedJobId, { force_without_kaggle: true }), {
+                    success: "Đã lưu chunk cuối vào MongoDB/MinIO.",
+                    reload: viewBundle,
+                  })}
                   onBack={goBack}
                 />
               ) : null}

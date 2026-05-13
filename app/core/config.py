@@ -20,6 +20,7 @@ class Settings:
     gemini_model: str
     mongo_uri: str
     mongo_db_name: str
+    allow_old_metadata_db_write: bool
     minio_endpoint: str
     minio_access_key: str
     minio_secret_key: str
@@ -48,6 +49,7 @@ def get_settings() -> Settings:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db_name=os.getenv("MONGO_DB_NAME", "data-ai-tra-cuu"),
+        allow_old_metadata_db_write=os.getenv("ALLOW_OLD_METADATA_DB_WRITE", "false").lower() in {"1", "true", "yes", "on"},
         minio_endpoint=os.getenv("MINIO_ENDPOINT", "http://127.0.0.1:9000"),
         minio_access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
         minio_secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
@@ -62,3 +64,18 @@ def get_settings() -> Settings:
         kaggle_max_attempts=int(os.getenv("KAGGLE_MAX_ATTEMPTS", "3")),
         kaggle_poll_seconds=int(os.getenv("KAGGLE_POLL_SECONDS", "20")),
     )
+
+
+_BLOCKED_METADATA_DB_NAMES = {
+    "data-khoa-luan",
+    "metadata-edu",
+    "metadata_edu",
+}
+
+
+def validate_safe_mongo_db_name(db_name: str | None = None) -> str:
+    settings = get_settings()
+    target = (db_name or settings.mongo_db_name).strip()
+    if target.lower() in _BLOCKED_METADATA_DB_NAMES and not settings.allow_old_metadata_db_write:
+        raise RuntimeError("Refusing to write to old Metadata-Edu database. Use MONGO_DB_NAME=data-ai-tra-cuu.")
+    return target

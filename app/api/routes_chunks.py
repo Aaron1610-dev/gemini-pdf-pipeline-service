@@ -1,17 +1,22 @@
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, status
 
 from app.models.chunk_models import ChunkAddPayload, ChunkListPayload, ChunkRecutPayload
 from app.models.job_models import JobStatus
 from app.services.chunk_service import (
     add_chunk as add_chunk_for_job,
+    approve_chunk as approve_single_chunk_for_job,
     approve_chunks as approve_chunks_for_job,
     delete_chunk as delete_chunk_for_job,
     ensure_chunk_preconditions,
     extract_chunks_for_job,
+    extract_chunks_for_lesson,
     read_chunks,
     recut_chunk,
     save_chunks,
 )
+from app.services.chunk_metadata_service import save_final_chunks_after_kaggle
 from app.services.job_service import update_job_state
 from app.services.progress_service import update_progress
 
@@ -19,26 +24,59 @@ router = APIRouter(prefix="/api/jobs", tags=["chunks"])
 
 
 @router.post("/{job_id}/extract/chunks")
-def extract_chunks(job_id: str, background_tasks: BackgroundTasks):
+def extract_chunks(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    payload: dict[str, Any] | None = Body(default=None),
+):
     try:
         ensure_chunk_preconditions(job_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    update_job_state(job_id, status=JobStatus.extracting_chunks, stage="extracting_chunks")
+    lesson_nums = payload.get("lesson_nums") if isinstance(payload, dict) else None
+    selected_lesson_num = lesson_nums[0] if isinstance(lesson_nums, list) and len(lesson_nums) == 1 else None
+    stage = "extracting_chunks_for_lesson" if selected_lesson_num is not None else "extracting_chunks"
+    message = (
+        f"Đang trích xuất chunk cho Lesson {int(selected_lesson_num):02d}..."
+        if selected_lesson_num is not None and str(selected_lesson_num).isdigit()
+        else "Đang trích xuất chunk, vui lòng chờ..."
+    )
+    update_job_state(job_id, status=JobStatus.extracting_chunks, stage=stage)
     update_progress(
         job_id,
         status=JobStatus.extracting_chunks,
-        stage="extracting_chunks",
-        message="Đang trích xuất chunk, vui lòng chờ...",
+        stage=stage,
+        message=message,
         percent=5,
     )
-    background_tasks.add_task(extract_chunks_for_job, job_id)
+    if selected_lesson_num is not None:
+        background_tasks.add_task(extract_chunks_for_lesson, job_id, selected_lesson_num)
+    else:
+        background_tasks.add_task(extract_chunks_for_job, job_id)
     return {
         "ok": True,
         "job_id": job_id,
         "status": JobStatus.extracting_chunks,
-        "message": "Đang trích xuất chunk, vui lòng chờ...",
+        "message": message,
     }
+
+
+@router.post("/{job_id}/lessons/{lesson_num}/extract-chunks")
+def extract_chunks_for_selected_lesson(job_id: str, lesson_num: int, background_tasks: BackgroundTasks):
+    try:
+        ensure_chunk_preconditions(job_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    update_job_state(job_id, status=JobStatus.extracting_chunks, stage="extracting_chunks_for_lesson")
+    update_progress(
+        job_id,
+        status=JobStatus.extracting_chunks,
+        stage="extracting_chunks_for_lesson",
+        message=f"Đang trích xuất chunk cho Lesson {lesson_num:02d}...",
+        percent=5,
+    )
+    background_tasks.add_task(extract_chunks_for_lesson, job_id, lesson_num)
+    return {"ok": True, "job_id": job_id, "status": JobStatus.extracting_chunks, "lesson_num": lesson_num}
 
 
 @router.get("/{job_id}/chunks")
@@ -84,13 +122,42 @@ def recut_chunks(job_id: str, payload: ChunkRecutPayload):
 @router.post("/{job_id}/chunks/approve")
 def approve_chunks(
     job_id: str,
-    payload: ChunkListPayload | None = Body(default=None),
+    payload: dict[str, Any] | ChunkListPayload | None = Body(default=None),
 ):
     try:
         chunks = None
+        chunk_ids = None
         if payload is not None:
-            chunks = [chunk.model_dump(mode="json", exclude_none=True) for chunk in payload.chunks]
-        return approve_chunks_for_job(job_id, chunks)
+            if isinstance(payload, ChunkListPayload):
+                chunks = [chunk.model_dump(mode="json", exclude_none=True) for chunk in payload.chunks]
+            elif isinstance(payload, dict):
+                raw_chunks = payload.get("chunks")
+                if isinstance(raw_chunks, list):
+                    chunks = [dict(chunk) for chunk in raw_chunks if isinstance(chunk, dict)]
+                raw_chunk_ids = payload.get("chunk_ids")
+                if isinstance(raw_chunk_ids, list):
+                    chunk_ids = raw_chunk_ids
+        return approve_chunks_for_job(job_id, chunks=chunks, chunk_ids=chunk_ids)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{job_id}/chunks/{chunk_id}/approve")
+def approve_chunk(job_id: str, chunk_id: str):
+    try:
+        return approve_single_chunk_for_job(job_id, chunk_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{job_id}/chunks/finalize-after-kaggle")
+def finalize_chunks_after_kaggle(job_id: str, force_without_kaggle: bool = Query(default=False)):
+    try:
+        return save_final_chunks_after_kaggle(job_id, force_without_kaggle=force_without_kaggle)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:

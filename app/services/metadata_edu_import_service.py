@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_safe_mongo_db_name
 from app.core.logging import append_job_log
 from app.core.paths import job_config_path, job_log_path, job_source_pdf_path, job_workspace
 from app.models.job_models import JobStatus
@@ -546,11 +546,12 @@ def import_bundle_to_metadata_edu(
 
         client = MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=3000)
         client.admin.command("ping")
-        db = client[settings.mongo_db_name]
+        db_name = validate_safe_mongo_db_name(settings.mongo_db_name)
+        db = client[db_name]
         _create_indexes(db, job_id)
 
         now = _now()
-        _log(job_id, f"mongo_db={settings.mongo_db_name}")
+        _log(job_id, f"mongo_db={db_name}")
         _log(job_id, f"bucket={bucket}")
         _log(job_id, f"bundle_path={bundle_path}")
 

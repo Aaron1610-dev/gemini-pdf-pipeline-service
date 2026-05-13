@@ -25,6 +25,7 @@ from app.pipeline.les_top_pipeline import run_extract_save_split
 from app.pipeline.pdf_output import flatten_manifest_items
 from app.services.job_service import ensure_job_exists, ensure_job_state, update_job_state
 from app.services.progress_service import update_progress, update_result
+from app.services.topic_metadata_service import save_topic_metadata_for_job
 from app.utils.files import read_json, write_json
 from app.utils.time import utc_now_iso
 
@@ -72,6 +73,109 @@ def _normalize_topic_for_api(item: dict[str, Any], index: int) -> dict[str, Any]
         "raw_heading": item.get("raw_heading") or heading,
         "raw_title": item.get("raw_title") or title,
     }
+
+
+def _topic_num_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group(0)) if match else None
+
+
+def _topic_num_set(values: list[Any] | None) -> set[int]:
+    nums: set[int] = set()
+    for value in values or []:
+        parsed = _topic_num_int(value)
+        if parsed is not None:
+            nums.add(parsed)
+    return nums
+
+
+def _topics_from_partial(job_id: str) -> list[dict[str, Any]]:
+    partial_path = _workspace_file(job_id, "topics_partial.json")
+    if not partial_path.exists():
+        return []
+    raw = read_json(partial_path)
+    topics = raw.get("topics", raw) if isinstance(raw, dict) else raw
+    if not isinstance(topics, list):
+        return []
+    return [_normalize_topic_for_api(dict(topic), index) for index, topic in enumerate(topics) if isinstance(topic, dict)]
+
+
+def _normalize_approved_topics_payload(job_id: str) -> dict[str, Any]:
+    approved_path = _workspace_file(job_id, "approved_topics.json")
+    partial_topics = _topics_from_partial(job_id)
+    topic_by_num = {_topic_num_int(topic.get("topic_num")): topic for topic in partial_topics}
+
+    approved_nums: set[int] = set()
+    approved_details: dict[int, dict[str, Any]] = {}
+    if approved_path.exists():
+        raw = read_json(approved_path)
+        if isinstance(raw, list):
+            for index, topic in enumerate(raw):
+                if isinstance(topic, dict):
+                    item = _normalize_topic_for_api(topic, index)
+                    num = _topic_num_int(item.get("topic_num"))
+                    if num is not None:
+                        approved_nums.add(num)
+                        approved_details[num] = {**item, "approved": True}
+        elif isinstance(raw, dict):
+            raw_topics = raw.get("topics", [])
+            if isinstance(raw_topics, list):
+                for index, topic in enumerate(raw_topics):
+                    if isinstance(topic, dict):
+                        item = _normalize_topic_for_api(topic, index)
+                        num = _topic_num_int(item.get("topic_num"))
+                        if num is not None:
+                            topic_by_num[num] = {**topic_by_num.get(num, {}), **item}
+                            if item.get("approved") or raw.get("approved") is True:
+                                approved_nums.add(num)
+                                approved_details[num] = {**item, "approved": True}
+            approved_nums.update(_topic_num_set(raw.get("approved_topic_nums")))
+
+    all_nums = [num for num in sorted(topic_by_num) if num is not None]
+    topics_out: list[dict[str, Any]] = []
+    for num in all_nums:
+        topic = {**topic_by_num[num], **approved_details.get(num, {})}
+        topic["approved"] = num in approved_nums
+        topics_out.append(topic)
+
+    approved_all = bool(all_nums) and all(num in approved_nums for num in all_nums)
+    pending_nums = [num for num in all_nums if num not in approved_nums]
+    return {
+        "approved_all": approved_all,
+        "approved": approved_all,
+        "approved_topic_nums": sorted(approved_nums),
+        "pending_topic_nums": pending_nums,
+        "topics": topics_out,
+        "updated_at": utc_now_iso(),
+    }
+
+
+def _write_metadata_edu_topic_state(
+    job_id: str,
+    *,
+    approved_nums: list[int],
+    saved_nums: list[int],
+    pending_nums: list[int],
+    topic_assets: dict[str, Any],
+) -> None:
+    state_path = job_state_path(job_id)
+    state = read_json(state_path) if state_path.exists() else {}
+    metadata_edu = dict(state.get("metadata_edu") or {})
+    topics_state = dict(metadata_edu.get("topics") or {})
+    topics_state.update(
+        {
+            "approved_topic_nums": approved_nums,
+            "saved_topic_nums": saved_nums,
+            "pending_topic_nums": pending_nums,
+            "topic_assets": topic_assets,
+            "updated_at": utc_now_iso(),
+        }
+    )
+    metadata_edu["topics"] = topics_state
+    write_json(state_path, {**state, "metadata_edu": metadata_edu, "updated_at": utc_now_iso()})
 
 
 def extract_topics_for_job(job_id: str) -> None:
@@ -226,14 +330,14 @@ def extract_topics_for_job(job_id: str) -> None:
 
 def read_topics(job_id: str) -> dict[str, Any]:
     ensure_job_exists(job_id)
-    approved_path = _workspace_file(job_id, "approved_topics.json")
     partial_path = _workspace_file(job_id, "topics_partial.json")
-    if approved_path.exists():
-        data = read_json(approved_path)
-        return {"ok": True, "job_id": job_id, "approved": True, "topics": data.get("topics", data)}
     if partial_path.exists():
-        data = read_json(partial_path)
-        return {"ok": True, "job_id": job_id, "approved": False, "topics": data.get("topics", data)}
+        data = _normalize_approved_topics_payload(job_id)
+        return {"ok": True, "job_id": job_id, **data}
+    approved_path = _workspace_file(job_id, "approved_topics.json")
+    if approved_path.exists():
+        data = _normalize_approved_topics_payload(job_id)
+        return {"ok": True, "job_id": job_id, **data}
     raise FileNotFoundError("No topics found for this job.")
 
 
@@ -261,21 +365,98 @@ def save_topics(job_id: str, topics: list[dict[str, Any]]) -> dict[str, Any]:
     return {"ok": True, "job_id": job_id, "approved": False, "topics": topics}
 
 
-def approve_topics(job_id: str, topics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def approve_topics(
+    job_id: str,
+    topics: list[dict[str, Any]] | None = None,
+    topic_nums: list[Any] | None = None,
+) -> dict[str, Any]:
     ensure_job_exists(job_id)
-    if topics is None:
-        topics = read_topics(job_id)["topics"]
-    if not topics:
+    if topics is not None:
+        save_topics(job_id, topics)
+
+    current = _normalize_approved_topics_payload(job_id)
+    all_topics = current["topics"]
+    if not all_topics:
         raise ValueError("Topic list is empty.")
-    payload = {"topics": topics, "approved": True, "approved_at": utc_now_iso()}
+
+    selected_nums = _topic_num_set(topic_nums)
+    if not selected_nums:
+        selected_nums = {_topic_num_int(topic.get("topic_num")) for topic in all_topics}
+        selected_nums = {num for num in selected_nums if num is not None}
+
+    approved_nums = set(current["approved_topic_nums"])
+    topic_assets = {}
+    state_path = job_state_path(job_id)
+    if state_path.exists():
+        state = read_json(state_path)
+        topic_assets = dict(((state.get("metadata_edu") or {}).get("topics") or {}).get("topic_assets") or {})
+
+    approved_at = utc_now_iso()
+    changed_count = 0
+    for topic in all_topics:
+        num = _topic_num_int(topic.get("topic_num"))
+        if num not in selected_nums:
+            continue
+        summary = save_topic_metadata_for_job(job_id, topic)
+        topic["approved"] = True
+        topic["approved_at"] = approved_at
+        topic["metadata_edu_saved"] = True
+        topic["minio_uploaded"] = True
+        topic["asset_object_key"] = summary["object_key"]
+        topic["asset_url"] = summary["url"]
+        topic["topic_id"] = summary["topic_id"]
+        topic["asset_id"] = summary["asset_id"]
+        topic_assets[str(num)] = summary
+        approved_nums.add(num)
+        changed_count += 1
+
+    if changed_count == 0:
+        raise ValueError("Selected topic_nums were not found.")
+
+    all_nums = [num for num in (_topic_num_int(topic.get("topic_num")) for topic in all_topics) if num is not None]
+    pending_nums = [num for num in sorted(all_nums) if num not in approved_nums]
+    approved_all = bool(all_nums) and not pending_nums
+    payload = {
+        "approved_all": approved_all,
+        "approved_topic_nums": sorted(approved_nums),
+        "pending_topic_nums": pending_nums,
+        "topics": all_topics,
+        "updated_at": approved_at,
+    }
     write_json(_workspace_file(job_id, "approved_topics.json"), payload)
     update_job_state(job_id, status=JobStatus.reviewing_topics, stage="reviewing_topics")
+    _write_metadata_edu_topic_state(
+        job_id,
+        approved_nums=sorted(approved_nums),
+        saved_nums=sorted(approved_nums),
+        pending_nums=pending_nums,
+        topic_assets=topic_assets,
+    )
+    if approved_all:
+        message = "Đã duyệt toàn bộ chủ đề. Có thể trích xuất bài học."
+    elif len(selected_nums) == 1:
+        message = f"Đã duyệt Topic {next(iter(selected_nums)):02d} và lưu PDF chủ đề lên MinIO."
+    else:
+        message = f"Đã duyệt {changed_count} chủ đề và lưu PDF chủ đề lên MinIO."
     update_result(
         job_id,
         ok=True,
         status=JobStatus.reviewing_topics,
-        message="Topics approved.",
-        data={"topics": topics, "approved": True},
+        message=message,
+        data=payload,
     )
-    _log(job_id, f"topics approved count={len(topics)}")
-    return {"ok": True, "job_id": job_id, "approved": True, "topics": topics}
+    update_progress(
+        job_id,
+        status=JobStatus.reviewing_topics,
+        stage="reviewing_topics",
+        message=message,
+        percent=100,
+        current=len(approved_nums),
+        total=len(all_nums),
+    )
+    _log(job_id, f"topics approved selected={sorted(selected_nums)} approved_total={len(approved_nums)} pending={pending_nums}")
+    return {"ok": True, "job_id": job_id, "approved": approved_all, **payload}
+
+
+def approve_topic(job_id: str, topic_num: Any) -> dict[str, Any]:
+    return approve_topics(job_id, topic_nums=[topic_num])

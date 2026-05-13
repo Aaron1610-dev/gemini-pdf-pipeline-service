@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_safe_mongo_db_name
 from app.core.logging import append_job_log
 from app.core.paths import job_log_path, job_workspace
 from app.services.minio_service import upload_file
@@ -147,7 +147,7 @@ def upload_subject_pdf_for_job(
     client = MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=3000)
     try:
         client.admin.command("ping")
-        db = client[settings.mongo_db_name]
+        db = client[validate_safe_mongo_db_name(settings.mongo_db_name)]
         _create_indexes(db, job_id)
         now = _now()
 

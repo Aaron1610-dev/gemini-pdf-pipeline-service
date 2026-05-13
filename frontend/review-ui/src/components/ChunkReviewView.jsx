@@ -27,6 +27,7 @@ export default function ChunkReviewView({
   onExtract,
   onSave,
   onApprove,
+  onApproveChunk,
   onAdd,
   onDelete,
   onRecut,
@@ -76,6 +77,7 @@ export default function ChunkReviewView({
         <div className="summaryCard"><span>Nhóm bài học</span><strong>{groups.length}</strong></div>
         <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Đã duyệt" : "Chưa duyệt"}</strong></div>
       </div>
+      <p className="infoNote">Chunk chỉ được lưu vào MongoDB/MinIO sau khi Kaggle xử lý xong.</p>
       <div className="actionBar">
         <button type="button" onClick={onExtract} disabled={loading}>Trích xuất chunk</button>
         <button type="button" onClick={onLoad} disabled={loading}>Tải danh sách chunk</button>
@@ -114,7 +116,9 @@ export default function ChunkReviewView({
                   <thead>
                     <tr>
                       <th>#</th>
+                      <th>Trạng thái</th>
                       {COLUMNS.map((column) => <th key={column}>{column}</th>)}
+                      <th>Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -124,6 +128,11 @@ export default function ChunkReviewView({
                       return (
                         <tr key={id} className={selectedChunk && chunkId(selectedChunk, localIndex) === id ? "selectedRow" : ""} onClick={() => setSelectedChunkId(id)}>
                           <td>{localIndex + 1}</td>
+                          <td>
+                            <span className={`inlineStatus ${chunk.kaggle_finalized ? "done" : chunk.waiting_for_kaggle ? "pending" : ""}`}>
+                              {chunk.kaggle_finalized ? "Đã lưu MongoDB/MinIO" : chunk.waiting_for_kaggle ? "Chờ Kaggle" : chunk.approved ? "Đã duyệt" : "Chưa duyệt"}
+                            </span>
+                          </td>
                           {COLUMNS.map((column) => (
                             <td key={column}>
                               {column === "content_head" ? (
@@ -138,6 +147,11 @@ export default function ChunkReviewView({
                               )}
                             </td>
                           ))}
+                          <td className="rowActions">
+                            <button type="button" onClick={() => onApproveChunk?.(chunk)} disabled={loading || chunk.approved}>
+                              Duyệt chunk này
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}

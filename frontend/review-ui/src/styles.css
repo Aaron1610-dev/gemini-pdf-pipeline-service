@@ -818,6 +818,24 @@ input[type="checkbox"] {
   border-top: 1px solid var(--border);
 }
 
+.advancedBox {
+  margin: 10px 0 14px;
+  padding: 12px;
+  border: 1px dashed #b8c8dc;
+  border-radius: 12px;
+  background: #f7fbff;
+}
+
+.infoNote {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .tableWrap {
   max-width: 100%;
   overflow: auto;
@@ -873,6 +891,41 @@ input[type="checkbox"] {
 
 .reviewTable td:nth-child(3) input {
   min-width: 220px;
+}
+
+.inlineStatus {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.inlineStatus.done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.inlineStatus.pending {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.rowActions {
+  min-width: 230px;
+}
+
+.rowActions button {
+  width: 100%;
+  margin: 0 0 8px;
+}
+
+.rowActions button:last-child {
+  margin-bottom: 0;
 }
 
 .reviewThreeColumn,

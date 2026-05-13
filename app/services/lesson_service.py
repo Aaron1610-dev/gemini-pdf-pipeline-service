@@ -12,6 +12,7 @@ from app.core.logging import append_job_log
 from app.core.paths import job_config_path, job_log_path, job_workspace
 from app.models.job_models import JobStatus
 from app.services.job_service import ensure_job_exists, update_job_state
+from app.services.lesson_metadata_service import save_lesson_metadata_for_job
 from app.services.progress_service import update_progress, update_result
 from app.utils.files import read_json, write_json
 from app.utils.time import utc_now_iso
@@ -100,6 +101,19 @@ def _normalize_lesson(
     }
 
 
+def _topic_num_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group(0)) if match else None
+
+
+def _pad2(value: Any) -> str:
+    parsed = _topic_num_int(value)
+    return f"{parsed:02d}" if parsed is not None else "00"
+
+
 def _slice_pdf(source_pdf: str, start: int, end: int, out_path: Path) -> None:
     reader = PdfReader(source_pdf)
     total = len(reader.pages)
@@ -155,6 +169,40 @@ def _build_lesson_pdfs(bundle_dir: Path, book_stem: str, source_pdf: str, lesson
         item = _normalize_lesson(lesson, index)
         safe_name = item["name"] if item["name"].startswith("lesson_") else f"lesson_{index + 1:02d}"
         folder = lesson_dir / safe_name
+        out_pdf = folder / f"{book_stem}_{safe_name}.pdf"
+        _slice_pdf(source_pdf, item["start"], item["end"], out_pdf)
+        meta = {
+            "kind": "lesson",
+            "name": safe_name,
+            "start": item["start"],
+            "end": item["end"],
+            "source_pdf": str(Path(source_pdf).resolve()),
+            "pdf": str(out_pdf.resolve()),
+            "lesson_num": item["lesson_num"],
+            "lesson_name": item["lesson_name"],
+            "topic_num": item["topic_num"],
+            "topic_name": item["topic_name"],
+            "heading": item["heading"],
+            "title": item["title"],
+            "raw_heading": item["raw_heading"],
+            "raw_title": item["raw_title"],
+        }
+        out_pdf.with_suffix(".json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+def _build_lesson_pdfs_for_topic(bundle_dir: Path, book_stem: str, source_pdf: str, lessons: list[dict[str, Any]]) -> None:
+    lesson_dir = bundle_dir / "Lesson"
+    lesson_dir.mkdir(parents=True, exist_ok=True)
+
+    for index, lesson in enumerate(lessons):
+        item = _normalize_lesson(lesson, index)
+        safe_name = item["name"] if item["name"].startswith("lesson_") else f"lesson_{_pad2(item['lesson_num'])}"
+        folder = lesson_dir / safe_name
+        if folder.exists():
+            shutil.rmtree(folder)
         out_pdf = folder / f"{book_stem}_{safe_name}.pdf"
         _slice_pdf(source_pdf, item["start"], item["end"], out_pdf)
         meta = {
@@ -459,6 +507,162 @@ def extract_lessons_for_job(job_id: str) -> None:
             pass
 
 
+def _approved_topic_for_num(job_id: str, topic_num: Any) -> dict[str, Any]:
+    approved_path = _workspace_file(job_id, "approved_topics.json")
+    if not approved_path.exists():
+        raise FileNotFoundError("approved_topics.json not found. Approve the topic before extracting lessons.")
+    payload = read_json(approved_path)
+    topics = _extract_items(payload, "topics")
+    wanted = _topic_num_int(topic_num)
+    for index, topic in enumerate(topics):
+        item = _normalize_topic(topic, index)
+        if _topic_num_int(item.get("topic_num")) == wanted and topic.get("approved"):
+            return item
+    raise ValueError(f"Topic {topic_num} is not approved.")
+
+
+def _merge_topic_lessons(
+    job_id: str,
+    topic_num: Any,
+    topic_lessons: list[dict[str, Any]],
+    existing_lessons: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    partial_path = _workspace_file(job_id, "lessons_partial.json")
+    if existing_lessons is None:
+        existing_lessons = []
+        if partial_path.exists():
+            existing_lessons = _extract_items(read_json(partial_path), "lessons")
+    wanted = _topic_num_int(topic_num)
+    remaining = [lesson for lesson in existing_lessons if _topic_num_int(lesson.get("topic_num")) != wanted]
+    merged = remaining + topic_lessons
+    groups = _group_lessons(merged)
+    payload = {
+        "selected_topic_num": str(wanted or topic_num),
+        "lessons": merged,
+        "topics": groups,
+        "grouped_by_topic": groups,
+        "updated_at": utc_now_iso(),
+    }
+    write_json(partial_path, payload)
+    return payload
+
+
+def extract_lessons_for_topic(job_id: str, topic_num: Any) -> None:
+    try:
+        ensure_lesson_preconditions(job_id)
+        config = read_json(job_config_path(job_id))
+        source_pdf = Path(config["source_pdf_path"])
+        state = read_json(_workspace_file(job_id, "extraction_state.json"))
+        topic = _approved_topic_for_num(job_id, topic_num)
+
+        raw_lessons = _extract_items(state.get("raw_lessons", []), "lessons")
+        book_stem = state.get("book_stem") or Path(source_pdf).stem
+        bundle_dir = Path(state.get("bundle_path") or state.get("rebuilt_bundle_path") or job_workspace(job_id) / book_stem)
+        padded = _pad2(topic.get("topic_num"))
+
+        update_job_state(job_id, status=JobStatus.extracting_lessons, stage="extracting_lessons_for_topic")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_lessons,
+            stage="extracting_lessons_for_topic",
+            message=f"Đang trích xuất bài học cho Topic {padded}...",
+            percent=5,
+            current=0,
+            total=1,
+        )
+        _log(job_id, f"start per-topic extraction topic={padded}")
+
+        previous_lessons = []
+        lessons_partial_path = _workspace_file(job_id, "lessons_partial.json")
+        if lessons_partial_path.exists():
+            previous_lessons = _extract_items(read_json(lessons_partial_path), "lessons")
+
+        lessons_out = _map_lessons_to_topics([topic], raw_lessons, job_id)
+        if not lessons_out:
+            raise ValueError(f"No lessons produced for Topic {padded}.")
+
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_lessons,
+            stage="rebuilding_lesson_pdfs_for_topic",
+            message=f"Đang cắt PDF bài học cho Topic {padded}...",
+            percent=65,
+            current=0,
+            total=len(lessons_out),
+        )
+        _build_lesson_pdfs_for_topic(bundle_dir, book_stem, str(source_pdf), lessons_out)
+
+        topic_dir = job_workspace(job_id) / "lessons" / f"topic_{padded}"
+        topic_dir.mkdir(parents=True, exist_ok=True)
+        topic_payload = {
+            "topic_num": str(topic.get("topic_num")),
+            "topic_name": topic.get("topic_name"),
+            "lessons": lessons_out,
+            "grouped_by_topic": _group_lessons(lessons_out),
+            "updated_at": utc_now_iso(),
+        }
+        write_json(topic_dir / "lessons_partial.json", topic_payload)
+        merged_payload = _merge_topic_lessons(job_id, topic.get("topic_num"), lessons_out, previous_lessons)
+
+        state["rebuilt_bundle_path"] = str(bundle_dir)
+        state["bundle_path"] = str(bundle_dir)
+        state["book_stem"] = book_stem
+        state["selected_topic_num"] = str(topic.get("topic_num"))
+        extracted_topics = set(state.get("lesson_extracted_topic_nums") or [])
+        extracted_topics.add(str(topic.get("topic_num")))
+        state["lesson_extracted_topic_nums"] = sorted(extracted_topics, key=lambda value: int(value) if str(value).isdigit() else 999)
+        state["lessons_count"] = len(merged_payload["lessons"])
+        state["updated_at"] = utc_now_iso()
+        write_json(_workspace_file(job_id, "extraction_state.json"), state)
+
+        message = f"Đã trích xuất bài học cho Topic {padded}, chờ duyệt."
+        update_result(
+            job_id,
+            ok=True,
+            status=JobStatus.reviewing_lessons,
+            message=message,
+            data={
+                "bundle_path": str(bundle_dir),
+                "book_stem": book_stem,
+                "selected_topic_num": str(topic.get("topic_num")),
+                "lessons": lessons_out,
+                "grouped_by_topic": topic_payload["grouped_by_topic"],
+            },
+        )
+        update_progress(
+            job_id,
+            status=JobStatus.reviewing_lessons,
+            stage="reviewing_lessons_for_topic",
+            message=message,
+            percent=100,
+            current=len(lessons_out),
+            total=len(lessons_out),
+        )
+        update_job_state(job_id, status=JobStatus.reviewing_lessons, stage="reviewing_lessons_for_topic")
+        _log(job_id, f"success per-topic lessons topic={padded} count={len(lessons_out)}")
+    except Exception as exc:
+        error = str(exc)
+        try:
+            update_job_state(job_id, status=JobStatus.error, stage="extracting_lessons_for_topic", error=error)
+            update_progress(
+                job_id,
+                status=JobStatus.error,
+                stage="extracting_lessons_for_topic",
+                message=error,
+                percent=0,
+            )
+            update_result(
+                job_id,
+                ok=False,
+                status=JobStatus.error,
+                message="Per-topic lesson extraction failed.",
+                error=error,
+            )
+            _log(job_id, f"per-topic failure error={error}")
+        except Exception:
+            pass
+
+
 def ensure_lesson_preconditions(job_id: str) -> None:
     ensure_job_exists(job_id)
     config = read_json(job_config_path(job_id))
@@ -481,7 +685,10 @@ def read_lessons(job_id: str) -> dict[str, Any]:
         return {
             "ok": True,
             "job_id": job_id,
-            "approved": True,
+            "approved": bool(raw.get("approved_all", raw.get("approved", False))),
+            "approved_all": bool(raw.get("approved_all", raw.get("approved", False))),
+            "approved_lesson_nums": raw.get("approved_lesson_nums", []),
+            "pending_lesson_nums": raw.get("pending_lesson_nums", []),
             "lessons": lessons,
             "grouped_by_topic": raw.get("grouped_by_topic") or _group_lessons(lessons),
             "raw": raw,
@@ -498,6 +705,52 @@ def read_lessons(job_id: str) -> dict[str, Any]:
             "raw": raw,
         }
     raise FileNotFoundError("No lessons found for this job.")
+
+
+def _lesson_num_set(values: list[Any] | None) -> set[int]:
+    nums: set[int] = set()
+    for value in values or []:
+        parsed = _topic_num_int(value)
+        if parsed is not None:
+            nums.add(parsed)
+    return nums
+
+
+def _load_lesson_approval_payload(job_id: str) -> dict[str, Any]:
+    partial_lessons = []
+    partial_path = _workspace_file(job_id, "lessons_partial.json")
+    if partial_path.exists():
+        partial_lessons = _extract_items(read_json(partial_path), "lessons")
+    by_num = {_topic_num_int(lesson.get("lesson_num")): _normalize_lesson(lesson, index) for index, lesson in enumerate(partial_lessons)}
+    approved_nums: set[int] = set()
+    if _workspace_file(job_id, "approved_lessons.json").exists():
+        raw = read_json(_workspace_file(job_id, "approved_lessons.json"))
+        for index, lesson in enumerate(_extract_items(raw, "lessons")):
+            item = _normalize_lesson(lesson, index)
+            num = _topic_num_int(item.get("lesson_num"))
+            if num is None:
+                continue
+            by_num[num] = {**by_num.get(num, {}), **item}
+            if item.get("approved") or raw.get("approved") is True:
+                approved_nums.add(num)
+        approved_nums.update(_lesson_num_set(raw.get("approved_lesson_nums")))
+
+    lessons = []
+    for num in sorted(num for num in by_num if num is not None):
+        lesson = by_num[num]
+        lesson["approved"] = num in approved_nums
+        lessons.append(lesson)
+    pending = [num for num in sorted(by_num) if num is not None and num not in approved_nums]
+    approved_all = bool(by_num) and not pending
+    return {
+        "approved_all": approved_all,
+        "approved": approved_all,
+        "approved_lesson_nums": sorted(approved_nums),
+        "pending_lesson_nums": pending,
+        "lessons": lessons,
+        "grouped_by_topic": _group_lessons(lessons),
+        "updated_at": utc_now_iso(),
+    }
 
 
 def save_lessons(job_id: str, lessons: list[dict[str, Any]]) -> dict[str, Any]:
@@ -530,18 +783,72 @@ def save_lessons(job_id: str, lessons: list[dict[str, Any]]) -> dict[str, Any]:
     return {"ok": True, "job_id": job_id, "approved": False, **payload}
 
 
-def approve_lessons(job_id: str, lessons: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def approve_lessons(
+    job_id: str,
+    lessons: list[dict[str, Any]] | None = None,
+    lesson_nums: list[Any] | None = None,
+) -> dict[str, Any]:
     ensure_job_exists(job_id)
-    if lessons is None:
-        lessons = read_lessons(job_id)["lessons"]
-    if not lessons:
+    if lessons is not None:
+        save_lessons(job_id, lessons)
+    current = _load_lesson_approval_payload(job_id)
+    all_lessons = current["lessons"]
+    if not all_lessons:
         raise ValueError("Lesson list is empty.")
-    normalized = [_normalize_lesson(lesson, index) for index, lesson in enumerate(lessons)]
+    selected_nums = _lesson_num_set(lesson_nums)
+    if not selected_nums:
+        selected_nums = {_topic_num_int(lesson.get("lesson_num")) for lesson in all_lessons}
+        selected_nums = {num for num in selected_nums if num is not None}
+
+    approved_nums = set(current["approved_lesson_nums"])
+    approved_at = utc_now_iso()
+    changed = 0
+    for lesson in all_lessons:
+        num = _topic_num_int(lesson.get("lesson_num"))
+        if num not in selected_nums:
+            continue
+        update_progress(
+            job_id,
+            status=JobStatus.reviewing_lessons,
+            stage="approving_lesson",
+            message="Đang lưu bài học vào MongoDB...",
+            percent=40,
+        )
+        summary = save_lesson_metadata_for_job(job_id, lesson)
+        update_progress(
+            job_id,
+            status=JobStatus.reviewing_lessons,
+            stage="approving_lesson",
+            message="Đang tải PDF bài học lên MinIO...",
+            percent=80,
+        )
+        lesson.update(
+            {
+                "approved": True,
+                "approved_at": approved_at,
+                "metadata_edu_saved": True,
+                "minio_uploaded": True,
+                "asset_object_key": summary["object_key"],
+                "asset_url": summary["url"],
+                "lesson_id": summary["lesson_id"],
+                "asset_id": summary["asset_id"],
+            }
+        )
+        approved_nums.add(num)
+        changed += 1
+    if changed == 0:
+        raise ValueError("Selected lesson_nums were not found.")
+    all_nums = [num for num in (_topic_num_int(lesson.get("lesson_num")) for lesson in all_lessons) if num is not None]
+    pending = [num for num in sorted(all_nums) if num not in approved_nums]
+    approved_all = bool(all_nums) and not pending
     payload = {
-        "lessons": normalized,
-        "grouped_by_topic": _group_lessons(normalized),
-        "approved": True,
-        "approved_at": utc_now_iso(),
+        "lessons": all_lessons,
+        "grouped_by_topic": _group_lessons(all_lessons),
+        "approved": approved_all,
+        "approved_all": approved_all,
+        "approved_lesson_nums": sorted(approved_nums),
+        "pending_lesson_nums": pending,
+        "approved_at": approved_at,
     }
     write_json(_workspace_file(job_id, "approved_lessons.json"), payload)
     update_job_state(job_id, status=JobStatus.reviewing_lessons, stage="reviewing_lessons")
@@ -549,17 +856,21 @@ def approve_lessons(job_id: str, lessons: list[dict[str, Any]] | None = None) ->
         job_id,
         ok=True,
         status=JobStatus.reviewing_lessons,
-        message="Lessons approved.",
+        message="Đã duyệt bài học và lưu Metadata-Edu.",
         data=payload,
     )
     update_progress(
         job_id,
         status=JobStatus.reviewing_lessons,
         stage="reviewing_lessons",
-        message="Lessons approved. Waiting for chunk extraction.",
+        message="Đã duyệt bài học và lưu Metadata-Edu.",
         percent=100,
-        current=len(normalized),
-        total=len(normalized),
+        current=len(approved_nums),
+        total=len(all_nums),
     )
-    _log(job_id, f"lessons approved count={len(normalized)}")
-    return {"ok": True, "job_id": job_id, "approved": True, **payload}
+    _log(job_id, f"lessons approved selected={sorted(selected_nums)} approved_total={len(approved_nums)}")
+    return {"ok": True, "job_id": job_id, "approved": approved_all, **payload}
+
+
+def approve_lesson(job_id: str, lesson_num: Any) -> dict[str, Any]:
+    return approve_lessons(job_id, lesson_nums=[lesson_num])

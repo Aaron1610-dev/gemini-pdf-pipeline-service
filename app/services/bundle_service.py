@@ -10,7 +10,9 @@ from app.core.paths import job_config_path, job_log_path, job_workspace, output_
 from app.models.job_models import JobStatus
 from app.services.job_service import ensure_job_exists, update_job_state
 from app.services.kaggle_service import build_skipped_kaggle_result, kaggle_result_path, run_kaggle_postprocess_for_job
+from app.services.chunk_metadata_service import save_final_chunks_after_kaggle
 from app.services.keyword_service import ensure_keyword_placeholders, extract_keywords_for_book
+from app.services.keyword_metadata_service import save_keyword_metadata_for_job
 from app.services.progress_service import update_progress, update_result
 from app.utils.files import ensure_dir, read_json, write_json
 from app.utils.time import utc_now_iso
@@ -336,9 +338,23 @@ def prepare_bundle_for_job(
             missing = _validate_bundle(output_bundle, book_stem)
             if missing:
                 raise RuntimeError(f"Bundle validation failed after Kaggle apply: {missing}")
+            update_progress(
+                job_id,
+                status=JobStatus.preparing_bundle,
+                stage="saving_final_chunks",
+                message="Đã nhận kết quả Kaggle, đang lưu chunk cuối vào MongoDB/MinIO...",
+                percent=62,
+                current=0,
+                total=counts["chunk_pdfs"],
+            )
+            chunk_finalize_summary = save_final_chunks_after_kaggle(job_id)
         else:
             kaggle_summary = build_skipped_kaggle_result(job_id, enabled=False, reason="job_config.enable_kaggle=false")
             _log(job_id, "Kaggle postprocess skipped enable_kaggle=false")
+            chunk_finalize_summary = {"skipped": True, "reason": "job_config.enable_kaggle=false", "chunks_waiting_for_kaggle": True}
+
+        if skip_kaggle:
+            chunk_finalize_summary = {"skipped": True, "reason": "skip_kaggle=true", "chunks_waiting_for_kaggle": True}
 
         keyword_summary: dict[str, Any] | None = None
         if skip_keywords:
@@ -357,7 +373,7 @@ def prepare_bundle_for_job(
                 job_id,
                 status=JobStatus.extracting_keywords,
                 stage="extracting_keywords",
-                message="Đang trích xuất keyword cho các chunk...",
+                message="Đang trích xuất keyword từ chunk cuối...",
                 percent=70,
                 current=0,
                 total=counts["chunk_pdfs"],
@@ -367,6 +383,8 @@ def prepare_bundle_for_job(
             _log(job_id, "keyword extraction started")
             summary = extract_keywords_for_book(job_id=job_id, book_dir=output_bundle)
             keyword_summary = summary.to_dict()
+            metadata_summary = save_keyword_metadata_for_job(job_id, output_bundle=output_bundle)
+            keyword_summary["metadata_edu"] = metadata_summary
             write_json(_workspace_file(job_id, "keyword_summary.json"), keyword_summary)
             _log(job_id, f"keyword extraction completed summary={keyword_summary}")
         else:
@@ -404,6 +422,7 @@ def prepare_bundle_for_job(
             "counts": counts,
             "missing": missing,
             "kaggle": kaggle_summary,
+            "chunk_finalize_summary": chunk_finalize_summary,
             "keyword_summary": keyword_summary,
         }
         _write_bundle_summary(job_id, {"ok": True, "job_id": job_id, "status": JobStatus.bundle_ready.value, **result_data})

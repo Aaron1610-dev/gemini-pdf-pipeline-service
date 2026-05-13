@@ -16,7 +16,23 @@ function groupsFrom(lessons, groupedByTopic) {
   return Array.from(map.values());
 }
 
-export default function LessonReviewView({ lessons, groupedByTopic, approved, loading, error, onChange, onLoad, onExtract, onSave, onApprove, onBack, onNext }) {
+export default function LessonReviewView({
+  lessons,
+  groupedByTopic,
+  selectedTopicNum,
+  approved,
+  loading,
+  error,
+  onChange,
+  onLoad,
+  onExtract,
+  onSave,
+  onApprove,
+  onApproveLesson,
+  onExtractChunksForLesson,
+  onBack,
+  onNext,
+}) {
   const safeLessons = Array.isArray(lessons) ? lessons : [];
   const groups = useMemo(() => groupsFrom(safeLessons, groupedByTopic), [safeLessons, groupedByTopic]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
@@ -29,8 +45,8 @@ export default function LessonReviewView({ lessons, groupedByTopic, approved, lo
       <div className="panelHeader">
         <div>
           <span className="stepLabel">Bước 3</span>
-          <h2>Bước 3: Duyệt bài học</h2>
-          <p className="muted">Kiểm tra các bài học thuộc từng chủ đề trước khi chia chunk.</p>
+          <h2>{selectedTopicNum ? `Bước 3: Bài học của Topic ${String(selectedTopicNum).padStart(2, "0")}` : "Bước 3: Duyệt bài học"}</h2>
+          <p className="muted">Kiểm tra các bài học thuộc topic đã duyệt trước khi chia chunk.</p>
         </div>
       </div>
       <div className="summaryCards">
@@ -38,6 +54,7 @@ export default function LessonReviewView({ lessons, groupedByTopic, approved, lo
         <div className="summaryCard"><span>Nhóm topic</span><strong>{groups.length}</strong></div>
         <div className="summaryCard"><span>Trạng thái</span><strong>{approved ? "Đã duyệt" : "Chưa duyệt"}</strong></div>
       </div>
+      <p className="infoNote">Duyệt từng bài học sẽ lưu ngay metadata và PDF bài học vào MongoDB/MinIO.</p>
       <div className="actionBar">
         <button type="button" onClick={onExtract} disabled={loading}>Trích xuất bài học</button>
         <button type="button" onClick={onLoad} disabled={loading}>Tải danh sách bài học</button>
@@ -75,7 +92,9 @@ export default function LessonReviewView({ lessons, groupedByTopic, approved, lo
                   <thead>
                     <tr>
                       <th>#</th>
+                      <th>Trạng thái</th>
                       {COLUMNS.map((column) => <th key={column}>{column}</th>)}
+                      <th>Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -84,6 +103,11 @@ export default function LessonReviewView({ lessons, groupedByTopic, approved, lo
                       return (
                         <tr key={lesson.name || `${selectedGroupIndex}-${localIndex}`} className={selectedLesson?.name === lesson.name ? "selectedRow" : ""} onClick={() => setSelectedLessonName(lesson.name)}>
                           <td>{localIndex + 1}</td>
+                          <td>
+                            <span className={`inlineStatus ${lesson.metadata_edu_saved ? "done" : lesson.approved ? "pending" : ""}`}>
+                              {lesson.metadata_edu_saved ? "Đã lưu MongoDB/MinIO" : lesson.approved ? "Đã duyệt" : "Chờ duyệt"}
+                            </span>
+                          </td>
                           {COLUMNS.map((column) => (
                             <td key={column}>
                               <input
@@ -94,6 +118,14 @@ export default function LessonReviewView({ lessons, groupedByTopic, approved, lo
                               />
                             </td>
                           ))}
+                          <td className="rowActions">
+                            <button type="button" onClick={() => onApproveLesson?.(lesson)} disabled={loading || lesson.metadata_edu_saved}>
+                              Duyệt bài học này
+                            </button>
+                            <button type="button" className="primaryButton" onClick={() => onExtractChunksForLesson?.(lesson)} disabled={loading || !lesson.metadata_edu_saved}>
+                              Trích xuất chunk bài này
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}

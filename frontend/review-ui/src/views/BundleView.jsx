@@ -10,6 +10,7 @@ export default function BundleView({
   onDownloadBundle,
   onImportMongo,
   onViewMongo,
+  onFinalizeChunks,
   onBack,
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -23,7 +24,7 @@ export default function BundleView({
         <div>
           <span className="stepLabel">Bước 5</span>
           <h2>Bước 5: Hoàn tất dữ liệu</h2>
-          <p className="muted">Tạo bundle cuối và import metadata vào MongoDB.</p>
+          <p className="muted">Chạy Kaggle, lưu chunk cuối, trích xuất keyword và hoàn tất dữ liệu.</p>
         </div>
         <div className="actionBar compact">
           <button type="button" className="primaryButton" onClick={onPrepareFast} disabled={loading}>Tạo bundle nhanh</button>
@@ -37,6 +38,7 @@ export default function BundleView({
       {advancedOpen ? (
         <div className="actionBar advancedActionBar">
           <button type="button" onClick={onPrepare} disabled={loading}>Tạo bundle có Kaggle</button>
+          <button type="button" onClick={onFinalizeChunks} disabled={loading}>Lưu chunk cuối sau Kaggle</button>
           <button type="button" onClick={onViewBundle} disabled={loading}>Xem bundle</button>
           <button type="button" onClick={onDownloadBundle} disabled={loading}>Tải ZIP bundle</button>
         </div>
@@ -54,6 +56,10 @@ export default function BundleView({
             <dd>{bundleCounts.lessons ?? bundleCounts.lesson_count ?? "-"}</dd>
             <dt>Chunk</dt>
             <dd>{bundleCounts.chunks ?? bundleCounts.chunk_count ?? "-"}</dd>
+            <dt>Chunk đã lưu sau Kaggle</dt>
+            <dd>{bundleResult?.chunk_finalize_summary?.counts?.chunk_count ?? bundleResult?.data?.chunk_finalize_summary?.counts?.chunk_count ?? "-"}</dd>
+            <dt>Keyword đã lưu</dt>
+            <dd>{bundleResult?.keyword_summary?.metadata_edu?.counts?.keyword_count ?? bundleResult?.data?.keyword_summary?.metadata_edu?.counts?.keyword_count ?? "-"}</dd>
           </dl>
           {Object.keys(bundleCounts).length ? <CountGrid counts={bundleCounts} /> : <p className="muted">Chưa có thống kê bundle.</p>}
           {Object.keys(assetCounts).length ? (

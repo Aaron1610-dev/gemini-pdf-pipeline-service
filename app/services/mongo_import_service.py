@@ -6,7 +6,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_safe_mongo_db_name
 from app.core.logging import append_job_log
 from app.core.paths import job_log_path, job_workspace, output_root
 from app.models.job_models import JobStatus
@@ -289,7 +289,7 @@ def _upsert(collection: Any, import_key: str, doc: dict[str, Any], now: str, cou
 
 
 def _safe_db_name() -> str:
-    return get_settings().mongo_db_name
+    return validate_safe_mongo_db_name(get_settings().mongo_db_name)
 
 
 def import_bundle_to_mongodb(job_id: str) -> dict[str, Any]:
@@ -334,7 +334,7 @@ def import_bundle_to_mongodb(job_id: str) -> dict[str, Any]:
 
         client = _mongo_client()
         client.admin.command("ping")
-        db = client[get_settings().mongo_db_name]
+        db = client[_safe_db_name()]
 
         for collection_name in COLLECTIONS.values():
             db[collection_name].create_index("import_key", unique=True)

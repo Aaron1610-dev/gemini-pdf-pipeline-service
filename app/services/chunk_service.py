@@ -5,12 +5,24 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pypdf import PdfReader
+
 from app.core.config import get_settings
 from app.core.gemini_keys import GeminiKeyManager
 from app.core.logging import append_job_log
 from app.core.paths import job_config_path, job_log_path, job_workspace
 from app.models.job_models import JobStatus
-from app.pipeline.chunk_pipeline import rebuild_lesson_chunks, run_extract_and_split_chunks_for_book
+from app.pipeline.chunk_pipeline import (
+    _compute_chunks_from_start_head,
+    _extract_page_text,
+    _flatten_start_head,
+    _heading_valid_in_page,
+    _is_junk_candidate,
+    rebuild_lesson_chunks,
+    run_extract_and_split_chunks_for_book,
+)
+from app.pipeline.gemini_runner import extract_structure_from_pdf
+from app.pipeline.prompts import build_chunk_prompt_start_head
 from app.services.job_service import ensure_job_exists, update_job_state
 from app.services.lesson_service import _build_lesson_pdfs, _build_topic_pdfs, _write_bundle_manifest
 from app.services.progress_service import update_progress, update_result
@@ -79,6 +91,8 @@ def _normalize_chunk(meta: dict[str, Any], index: int, lesson_lookup: dict[str, 
         "chunk_id": meta.get("chunk_id") or meta.get("id") or f"{lesson_stem}:{chunk}",
         "id": meta.get("id") or meta.get("chunk_id") or f"{lesson_stem}:{chunk}",
         "lesson_stem": lesson_stem,
+        "topic_num": meta.get("topic_num") or lesson_info.get("topic_num", ""),
+        "topic_name": meta.get("topic_name") or lesson_info.get("topic_name", ""),
         "lesson_num": meta.get("lesson_num") or lesson_info.get("lesson_num", ""),
         "lesson_name": meta.get("lesson_name") or lesson_info.get("lesson_name", ""),
         "chunk": chunk,
@@ -157,6 +171,19 @@ def _write_chunks_partial(job_id: str, chunks: list[dict[str, Any]]) -> dict[str
     }
     write_json(_workspace_file(job_id, "chunks_partial.json"), payload)
     return payload
+
+
+def _chunk_id_set(values: list[Any] | None) -> set[str]:
+    return {str(value) for value in values or [] if value is not None}
+
+
+def _num_set(values: list[Any] | None) -> set[int]:
+    nums = set()
+    for value in values or []:
+        parsed = _chunk_number(value, 0)
+        if parsed and parsed != "0":
+            nums.add(int(parsed))
+    return nums
 
 
 def ensure_chunk_preconditions(job_id: str) -> None:
@@ -318,6 +345,106 @@ def extract_chunks_for_job(job_id: str) -> None:
             pass
 
 
+def _approved_lesson_for_num(job_id: str, lesson_num: Any) -> dict[str, Any]:
+    approved_path = _workspace_file(job_id, "approved_lessons.json")
+    if not approved_path.exists():
+        raise FileNotFoundError("approved_lessons.json not found. Approve the lesson before extracting chunks.")
+    lessons = _extract_items(read_json(approved_path), "lessons")
+    wanted = int(_chunk_number(lesson_num, 0))
+    for lesson in lessons:
+        if int(_chunk_number(lesson.get("lesson_num"), 0)) == wanted and lesson.get("approved") and lesson.get("metadata_edu_saved"):
+            return lesson
+    raise ValueError(f"Lesson {lesson_num} is not approved with Metadata-Edu saved.")
+
+
+def _lesson_pdf_for_num(bundle_dir: Path, lesson_num: Any) -> Path:
+    suffix = f"lesson_{int(_chunk_number(lesson_num, 0)):02d}"
+    candidates = sorted((bundle_dir / "Lesson" / suffix).glob("*.pdf"))
+    if not candidates:
+        candidates = sorted((bundle_dir / "Lesson").glob(f"**/*{suffix}*.pdf"))
+    if not candidates:
+        raise FileNotFoundError(f"Lesson PDF not found for {suffix}.")
+    return candidates[0]
+
+
+def _merge_lesson_chunks(job_id: str, lesson_stem: str, new_chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    existing = []
+    partial_path = _workspace_file(job_id, "chunks_partial.json")
+    if partial_path.exists():
+        existing = _extract_items(read_json(partial_path), "chunks")
+    merged = [chunk for chunk in existing if chunk.get("lesson_stem") != lesson_stem] + new_chunks
+    merged.sort(key=lambda item: (item.get("lesson_stem", ""), item.get("chunk", "")))
+    return _write_chunks_partial(job_id, merged)
+
+
+def extract_chunks_for_lesson(job_id: str, lesson_num: Any) -> None:
+    try:
+        ensure_chunk_preconditions(job_id)
+        _approved_lesson_for_num(job_id, lesson_num)
+        _state, book_stem, bundle_dir = _find_bundle(job_id)
+        lesson_pdf = _lesson_pdf_for_num(bundle_dir, lesson_num)
+        lesson_stem = lesson_pdf.stem
+        update_job_state(job_id, status=JobStatus.extracting_chunks, stage="extracting_chunks_for_lesson")
+        update_progress(
+            job_id,
+            status=JobStatus.extracting_chunks,
+            stage="extracting_chunks_for_lesson",
+            message=f"Đang trích xuất chunk cho Lesson {int(_chunk_number(lesson_num, 0)):02d}...",
+            percent=5,
+        )
+        key_manager = GeminiKeyManager.from_env()
+        if key_manager.key_count() == 0:
+            raise RuntimeError("No Gemini API keys configured. Set GEMINI_API_KEYS or GEMINI_API_KEY_1.")
+
+        total_pages = len(PdfReader(str(lesson_pdf)).pages)
+        raw = extract_structure_from_pdf(
+            key_manager,
+            str(lesson_pdf),
+            build_chunk_prompt_start_head(total_pages=total_pages),
+            model=get_settings().gemini_model,
+            status_cb=lambda message: _log(job_id, f"gemini lesson {lesson_num}: {message}"),
+        )
+        items = _flatten_start_head(raw.get("list_chunk")) if isinstance(raw.get("list_chunk"), list) else []
+        filtered = []
+        for start, content_head, heading, title in items:
+            is_junk, _reason = _is_junk_candidate(heading, title)
+            if is_junk:
+                continue
+            page_text = _extract_page_text(str(lesson_pdf), start)
+            page_ok, _page_reason = _heading_valid_in_page(page_text, heading, title)
+            if page_ok:
+                filtered.append((start, content_head, heading, title))
+        computed = _compute_chunks_from_start_head(filtered, total_pages)
+        chunk_items = []
+        for item in computed:
+            chunk_name, obj = next(iter(item.items()))
+            chunk_items.append({"chunk": chunk_name, **obj})
+
+        rebuilt = rebuild_lesson_chunks(
+            lesson_pdf=lesson_pdf,
+            lesson_stem=lesson_stem,
+            chunk_root=bundle_dir / "Chunk",
+            chunk_items=chunk_items,
+        )
+        lookup = _lesson_lookup(job_id, bundle_dir)
+        normalized = [_normalize_chunk(chunk, index, lookup) for index, chunk in enumerate(rebuilt)]
+        payload = _merge_lesson_chunks(job_id, lesson_stem, normalized)
+        write_json(job_workspace(job_id) / "chunks" / f"lesson_{int(_chunk_number(lesson_num, 0)):02d}" / "chunks_partial.json", {"chunks": normalized, "updated_at": utc_now_iso()})
+        update_result(job_id, ok=True, status=JobStatus.reviewing_chunks, message=f"Đã trích xuất chunk cho Lesson {int(_chunk_number(lesson_num, 0)):02d}.", data=payload)
+        update_progress(job_id, status=JobStatus.reviewing_chunks, stage="reviewing_chunks_for_lesson", message=f"Đã trích xuất chunk cho Lesson {int(_chunk_number(lesson_num, 0)):02d}, chờ duyệt.", percent=100, current=len(normalized), total=len(normalized))
+        update_job_state(job_id, status=JobStatus.reviewing_chunks, stage="reviewing_chunks_for_lesson")
+        _log(job_id, f"success per-lesson chunks lesson={lesson_num} count={len(normalized)}")
+    except Exception as exc:
+        error = str(exc)
+        try:
+            update_job_state(job_id, status=JobStatus.error, stage="extracting_chunks_for_lesson", error=error)
+            update_progress(job_id, status=JobStatus.error, stage="extracting_chunks_for_lesson", message=error, percent=0)
+            update_result(job_id, ok=False, status=JobStatus.error, message="Per-lesson chunk extraction failed.", error=error)
+            _log(job_id, f"per-lesson failure error={error}")
+        except Exception:
+            pass
+
+
 def read_chunks(job_id: str) -> dict[str, Any]:
     ensure_job_exists(job_id)
     approved_path = _workspace_file(job_id, "approved_chunks.json")
@@ -325,7 +452,17 @@ def read_chunks(job_id: str) -> dict[str, Any]:
     if approved_path.exists():
         raw = read_json(approved_path)
         chunks = _extract_items(raw, "chunks")
-        return {"ok": True, "job_id": job_id, "approved": True, "chunks": chunks, "grouped_by_lesson": raw.get("grouped_by_lesson") or _group_chunks(chunks), "raw": raw}
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "approved": bool(raw.get("approved_all", raw.get("approved", False))),
+            "approved_all": bool(raw.get("approved_all", raw.get("approved", False))),
+            "approved_chunk_ids": raw.get("approved_chunk_ids", []),
+            "pending_chunk_ids": raw.get("pending_chunk_ids", []),
+            "chunks": chunks,
+            "grouped_by_lesson": raw.get("grouped_by_lesson") or _group_chunks(chunks),
+            "raw": raw,
+        }
     if partial_path.exists():
         raw = read_json(partial_path)
         chunks = _extract_items(raw, "chunks")
@@ -419,17 +556,97 @@ def recut_chunk(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "job_id": job_id, "chunks": rebuilt, "grouped_by_lesson": _group_chunks(rebuilt), "count": len(rebuilt)}
 
 
-def approve_chunks(job_id: str, chunks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _load_chunk_approval_payload(job_id: str) -> dict[str, Any]:
+    partial_chunks = []
+    if _workspace_file(job_id, "chunks_partial.json").exists():
+        partial_chunks = _extract_items(read_json(_workspace_file(job_id, "chunks_partial.json")), "chunks")
+    by_id = {}
+    for index, chunk in enumerate(partial_chunks):
+        item = _normalize_chunk(chunk, index)
+        by_id[str(item.get("chunk_id") or item.get("id"))] = item
+    approved_ids: set[str] = set()
+    if _workspace_file(job_id, "approved_chunks.json").exists():
+        raw = read_json(_workspace_file(job_id, "approved_chunks.json"))
+        for index, chunk in enumerate(_extract_items(raw, "chunks")):
+            item = _normalize_chunk(chunk, index)
+            cid = str(item.get("chunk_id") or item.get("id"))
+            by_id[cid] = {**by_id.get(cid, {}), **item}
+            if item.get("approved") or raw.get("approved") is True:
+                approved_ids.add(cid)
+        approved_ids.update(_chunk_id_set(raw.get("approved_chunk_ids")))
+    chunks = []
+    for cid in sorted(by_id):
+        chunk = by_id[cid]
+        chunk["approved"] = cid in approved_ids
+        chunks.append(chunk)
+    pending = [str(chunk.get("chunk_id") or chunk.get("id")) for chunk in chunks if not chunk.get("approved")]
+    approved_all = bool(chunks) and not pending
+    return {
+        "approved": approved_all,
+        "approved_all": approved_all,
+        "approved_chunk_ids": sorted(approved_ids),
+        "pending_chunk_ids": pending,
+        "chunks": chunks,
+        "grouped_by_lesson": _group_chunks(chunks),
+        "updated_at": utc_now_iso(),
+    }
+
+
+def approve_chunks(
+    job_id: str,
+    chunks: list[dict[str, Any]] | None = None,
+    chunk_ids: list[Any] | None = None,
+) -> dict[str, Any]:
     ensure_job_exists(job_id)
-    if chunks is None:
-        chunks = read_chunks(job_id)["chunks"]
-    if not chunks:
+    if chunks is not None:
+        save_chunks(job_id, chunks)
+    current = _load_chunk_approval_payload(job_id)
+    all_chunks = current["chunks"]
+    if not all_chunks:
         raise ValueError("Chunk list is empty.")
-    normalized = [_normalize_chunk(chunk, index) for index, chunk in enumerate(chunks)]
-    payload = {"chunks": normalized, "grouped_by_lesson": _group_chunks(normalized), "approved": True, "approved_at": utc_now_iso()}
+    selected_ids = _chunk_id_set(chunk_ids)
+    if not selected_ids:
+        selected_ids = {str(chunk.get("chunk_id") or chunk.get("id")) for chunk in all_chunks}
+    approved_ids = set(current["approved_chunk_ids"])
+    approved_at = utc_now_iso()
+    changed = 0
+    for chunk in all_chunks:
+        cid = str(chunk.get("chunk_id") or chunk.get("id"))
+        if cid not in selected_ids:
+            continue
+        chunk.update(
+            {
+                "approved": True,
+                "approved_at": approved_at,
+                "metadata_edu_saved": False,
+                "minio_uploaded": False,
+                "waiting_for_kaggle": True,
+            }
+        )
+        approved_ids.add(cid)
+        changed += 1
+    if changed == 0:
+        raise ValueError("Selected chunk_ids were not found.")
+    pending = [str(chunk.get("chunk_id") or chunk.get("id")) for chunk in all_chunks if str(chunk.get("chunk_id") or chunk.get("id")) not in approved_ids]
+    approved_all = bool(all_chunks) and not pending
+    payload = {
+        "chunks": all_chunks,
+        "grouped_by_lesson": _group_chunks(all_chunks),
+        "approved": approved_all,
+        "approved_all": approved_all,
+        "approved_chunk_ids": sorted(approved_ids),
+        "pending_chunk_ids": pending,
+        "approved_at": approved_at,
+        "waiting_for_kaggle": True,
+    }
     write_json(_workspace_file(job_id, "approved_chunks.json"), payload)
     update_job_state(job_id, status=JobStatus.reviewing_chunks, stage="reviewing_chunks")
-    update_result(job_id, ok=True, status=JobStatus.reviewing_chunks, message="Chunks approved.", data=payload)
-    update_progress(job_id, status=JobStatus.reviewing_chunks, stage="reviewing_chunks", message="Chunks approved. Ready for bundle preparation.", percent=100, current=len(normalized), total=len(normalized))
-    _log(job_id, f"chunks approved count={len(normalized)}")
-    return {"ok": True, "job_id": job_id, "approved": True, **payload}
+    message = "Đã duyệt chunk. Chờ Kaggle xử lý trước khi lưu MongoDB/MinIO."
+    update_result(job_id, ok=True, status=JobStatus.reviewing_chunks, message=message, data=payload)
+    update_progress(job_id, status=JobStatus.reviewing_chunks, stage="reviewing_chunks", message=message, percent=100, current=len(approved_ids), total=len(all_chunks))
+    _log(job_id, f"chunks approved selected={sorted(selected_ids)} approved_total={len(approved_ids)}")
+    return {"ok": True, "job_id": job_id, "approved": approved_all, **payload}
+
+
+def approve_chunk(job_id: str, chunk_id: Any) -> dict[str, Any]:
+    return approve_chunks(job_id, chunk_ids=[chunk_id])

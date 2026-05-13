@@ -30,7 +30,7 @@ MONGO_DB_NAME=data-ai-tra-cuu
 MINIO_ENDPOINT=http://127.0.0.1:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=data-edu
+MINIO_BUCKET=ai-tra-cuu
 MINIO_SECURE=false
 MINIO_PUBLIC_URL=http://127.0.0.1:9000
 
@@ -231,7 +231,7 @@ Run MinIO locally and configure the pipeline service with:
 MINIO_ENDPOINT=http://127.0.0.1:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=data-edu
+MINIO_BUCKET=ai-tra-cuu
 MINIO_SECURE=false
 MINIO_PUBLIC_URL=http://127.0.0.1:9000
 ```
@@ -239,10 +239,10 @@ MINIO_PUBLIC_URL=http://127.0.0.1:9000
 The importer creates the bucket if it does not exist. Verify uploads in the MinIO console by checking:
 
 ```text
-data-edu/documents/lop-11/tin-hoc/subject/
-data-edu/documents/lop-11/tin-hoc/topic/
-data-edu/documents/lop-11/tin-hoc/lesson/
-data-edu/documents/lop-11/tin-hoc/chunk/
+ai-tra-cuu/documents/lop-11/tin-hoc/subject/
+ai-tra-cuu/documents/lop-11/tin-hoc/topic/
+ai-tra-cuu/documents/lop-11/tin-hoc/lesson/
+ai-tra-cuu/documents/lop-11/tin-hoc/chunk/
 ```
 
 MinIO upload logs are written to:

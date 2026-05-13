@@ -233,7 +233,7 @@ MONGO_DB_NAME=data-ai-tra-cuu
 MINIO_ENDPOINT=http://127.0.0.1:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=data-edu
+MINIO_BUCKET=ai-tra-cuu
 MINIO_SECURE=false
 MINIO_PUBLIC_URL=http://127.0.0.1:9000
 ```

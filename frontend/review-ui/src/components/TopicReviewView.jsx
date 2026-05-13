@@ -84,7 +84,9 @@ function SummaryBar({ items }) {
 function ActionBar({ loading, approved, count, onExtract, onLoad, onSave, onApprove, bottom }) {
   return (
     <div className={`actionBar ${bottom ? "bottom" : ""}`}>
-      <button type="button" onClick={onExtract} disabled={loading}>Trích xuất chủ đề</button>
+      <button type="button" className={count === 0 ? "primaryButton" : ""} onClick={onExtract} disabled={loading}>
+        {count === 0 ? "Bắt đầu trích xuất chủ đề" : "Trích xuất lại chủ đề"}
+      </button>
       <button type="button" onClick={onLoad} disabled={loading}>Tải danh sách chủ đề</button>
       <button type="button" onClick={onSave} disabled={loading || approved || count === 0}>Lưu chủ đề</button>
       <button type="button" className="primaryButton" onClick={onApprove} disabled={loading || approved || count === 0}>Duyệt và sang bước bài học</button>

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, File, Form, UploadFile
 
-from app.services.job_service import create_job, get_job, get_status, list_jobs
+from app.services.job_service import create_job, debug_job_files, get_job, get_status, list_jobs
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -41,3 +41,8 @@ def read_job(job_id: str):
 @router.get("/{job_id}/status")
 def read_job_status(job_id: str):
     return get_status(job_id)
+
+
+@router.get("/{job_id}/debug-files")
+def read_job_debug_files(job_id: str):
+    return debug_job_files(job_id)

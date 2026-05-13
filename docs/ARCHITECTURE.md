@@ -63,7 +63,7 @@ flowchart LR
   API --> Kaggle[Kaggle Kernel]
   API --> Out[output/book_stem]
   API --> Mongo[(MongoDB)]
-  API --> MinIO[(MinIO data-edu)]
+  API --> MinIO[(MinIO ai-tra-cuu)]
   WS --> Review[topics/lessons/chunks partial + approved JSON]
   Out --> Bundle[Manifest + Topic/Lesson/Chunk PDFs + JSON]
 ```

@@ -634,6 +634,68 @@ input[type="checkbox"] {
   background: linear-gradient(90deg, var(--cyan), var(--primary));
 }
 
+.progressBanner {
+  width: min(1180px, calc(100% - 36px));
+  margin: 14px auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #b9d4ff;
+  border-radius: 16px;
+  background: #f5f9ff;
+  box-shadow: var(--shadow-soft);
+  padding: 13px 15px;
+}
+
+.progressBanner strong,
+.progressBanner span {
+  display: block;
+}
+
+.progressBanner span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.progressPercent {
+  color: var(--primary-dark) !important;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.progressTrack.indeterminate .progressFill {
+  animation: indeterminate 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes indeterminate {
+  from {
+    transform: translateX(-55%);
+  }
+  to {
+    transform: translateX(155%);
+  }
+}
+
+.minioDetails {
+  margin-top: 14px;
+  border: 1px solid rgba(22, 138, 74, 0.22);
+  border-radius: 14px;
+  background: var(--success-soft);
+  padding: 10px 12px;
+}
+
+.minioDetails summary {
+  cursor: pointer;
+  color: #0f6c3a;
+  font-weight: 850;
+}
+
+.minioDetails .summaryGrid {
+  margin-top: 10px;
+}
+
 .tabList {
   display: flex;
   flex-wrap: wrap;

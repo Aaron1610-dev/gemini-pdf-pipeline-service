@@ -120,7 +120,7 @@ export default function App() {
         setDetailsError(err.message);
         stopPolling();
       }
-    }, 3000);
+    }, 2000);
   }
 
   function inferStepFromStatus(value) {
@@ -208,7 +208,9 @@ export default function App() {
   }
 
   async function afterUpload(created) {
-    setSuccessMessage("Đã tạo job thành công. Tiếp tục trích xuất chủ đề.");
+    const bucket = created?.minio?.bucket || "ai-tra-cuu";
+    setSuccessMessage(`Sách đã được tải lên MinIO bucket ${bucket}. Đang chờ trích xuất chủ đề.`);
+    setActiveStep(WORKFLOW_STEPS.topics);
     await loadJobs(false);
     if (created?.job_id) setSelectedJobId(created.job_id);
   }
@@ -221,11 +223,12 @@ export default function App() {
     const { success, reload } = options;
     if (!selectedJobId) return;
     setActionLoading(true);
-    setSuccessMessage("");
+    setSuccessMessage(options.loadingMessage || "");
     try {
       const result = await action();
       if (success) setSuccessMessage(success);
       await Promise.all([loadJobs(false), loadSelectedJob(selectedJobId, { keepMessage: true, keepReview: true, keepResults: true, keepStep: true })]);
+      if (BUSY_STATUSES.has(result?.status) || BUSY_STATUSES.has(status?.status)) startPolling();
       if (reload) await reload(result);
       return result;
     } catch (err) {
@@ -401,6 +404,7 @@ export default function App() {
 
   const backendOk = healthInfo?.status === "ok";
   const selectedStatus = job?.status || status?.status;
+  const isBusy = actionLoading || BUSY_STATUSES.has(selectedStatus);
   const shortJobId = selectedJobId ? `${selectedJobId.slice(0, 8)}...${selectedJobId.slice(-4)}` : "-";
   const rawData = {
     job,
@@ -410,6 +414,7 @@ export default function App() {
     chunks,
     bundleResult,
     mongoResult,
+    minio: job?.minio,
   };
 
   function goBack() {
@@ -465,6 +470,7 @@ export default function App() {
 
       {healthError ? <div className="warningBox">{healthError}</div> : null}
       {successMessage ? <div className="successBanner">{successMessage}</div> : null}
+      {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang trích xuất, vui lòng chờ..." /> : null}
 
       <main className="focusShell">
         {activeStep === WORKFLOW_STEPS.upload ? (
@@ -515,6 +521,16 @@ export default function App() {
                   <dt>Job ID</dt><dd className="mono">{shortJobId}</dd>
                   <dt>Cập nhật</dt><dd>{job.updated_at || status?.updated_at || "-"}</dd>
                 </dl>
+                {job?.minio?.subject_asset_uploaded ? (
+                  <details className="minioDetails">
+                    <summary>Sách đã được tải lên MinIO</summary>
+                    <dl className="summaryGrid">
+                      <dt>Bucket</dt><dd>{job.minio.bucket || "ai-tra-cuu"}</dd>
+                      <dt>Object key</dt><dd className="mono breakText">{job.minio.subject_object_key || "-"}</dd>
+                      <dt>URL</dt><dd className="mono breakText">{job.minio.subject_url || "-"}</dd>
+                    </dl>
+                  </details>
+                ) : null}
               </section> : null}
 
               {activeStep === WORKFLOW_STEPS.upload ? (
@@ -535,7 +551,12 @@ export default function App() {
                   error={topicsError}
                   onChange={(index, field, value) => updateItem(setTopics, index, field, value)}
                   onLoad={loadTopics}
-                  onExtract={() => runAction(() => extractTopics(selectedJobId), { success: "Đã bắt đầu trích xuất topics.", onError: setTopicsError })}
+                  onExtract={() => runAction(() => extractTopics(selectedJobId), {
+                    loadingMessage: "Đang trích xuất, vui lòng chờ...",
+                    success: "Đang trích xuất chủ đề. Theo dõi tiến độ bên trên.",
+                    reload: async () => startPolling(),
+                    onError: setTopicsError,
+                  })}
                   onSave={() => runAction(() => saveTopics(selectedJobId, topics || []), { success: "Đã lưu topics.", reload: loadTopics, onError: setTopicsError })}
                   onApprove={() => runAction(() => approveTopics(selectedJobId, topics || []), {
                     success: "Đã duyệt chủ đề. Tiếp tục trích xuất bài học.",
@@ -559,7 +580,12 @@ export default function App() {
                   error={lessonsError}
                   onChange={(index, field, value) => updateItem(setLessons, index, field, value)}
                   onLoad={loadLessons}
-                  onExtract={() => runAction(() => extractLessons(selectedJobId), { success: "Đã bắt đầu trích xuất lessons.", onError: setLessonsError })}
+                  onExtract={() => runAction(() => extractLessons(selectedJobId), {
+                    loadingMessage: "Đang trích xuất, vui lòng chờ...",
+                    success: "Đang trích xuất bài học. Theo dõi tiến độ bên trên.",
+                    reload: async () => startPolling(),
+                    onError: setLessonsError,
+                  })}
                   onSave={() => runAction(() => saveLessons(selectedJobId, lessons || []), { success: "Đã lưu lessons.", reload: loadLessons, onError: setLessonsError })}
                   onApprove={() => runAction(() => approveLessons(selectedJobId, lessons || []), {
                     success: "Đã duyệt bài học. Tiếp tục trích xuất chunk.",
@@ -583,7 +609,12 @@ export default function App() {
                   error={chunksError}
                   onChange={(index, field, value) => updateItem(setChunks, index, field, value)}
                   onLoad={loadChunks}
-                  onExtract={() => runAction(() => extractChunks(selectedJobId), { success: "Đã bắt đầu trích xuất chunks.", onError: setChunksError })}
+                  onExtract={() => runAction(() => extractChunks(selectedJobId), {
+                    loadingMessage: "Đang trích xuất, vui lòng chờ...",
+                    success: "Đang trích xuất chunk. Theo dõi tiến độ bên trên.",
+                    reload: async () => startPolling(),
+                    onError: setChunksError,
+                  })}
                   onSave={() => runAction(() => saveChunks(selectedJobId, chunks || []), { success: "Đã lưu chunks.", reload: loadChunks, onError: setChunksError })}
                   onApprove={() => runAction(() => approveChunks(selectedJobId, chunks || []), {
                     success: "Đã duyệt chunk. Có thể tạo bundle cuối.",
@@ -642,5 +673,24 @@ export default function App() {
         </section>
       </main>
     </div>
+  );
+}
+
+function ProgressBanner({ status, fallback }) {
+  const rawPercent = Number(status?.percent);
+  const hasPercent = Number.isFinite(rawPercent) && rawPercent > 0;
+  const percent = Math.max(0, Math.min(rawPercent || 0, 100));
+
+  return (
+    <section className="progressBanner">
+      <div>
+        <strong>{status?.message || fallback}</strong>
+        <span>{status?.stage || "Đang xử lý"}</span>
+      </div>
+      <div className={`progressTrack ${hasPercent ? "" : "indeterminate"}`}>
+        <div className="progressFill" style={{ width: hasPercent ? `${percent}%` : "42%" }} />
+      </div>
+      <span className="progressPercent">{hasPercent ? `${percent}%` : "Đang chạy"}</span>
+    </section>
   );
 }

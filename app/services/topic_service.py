@@ -14,12 +14,16 @@ from app.core.logging import append_job_log
 from app.core.paths import (
     job_config_path,
     job_log_path,
+    job_progress_path,
+    job_result_path,
+    job_source_pdf_path,
+    job_state_path,
     job_workspace,
 )
 from app.models.job_models import JobStatus
 from app.pipeline.les_top_pipeline import run_extract_save_split
 from app.pipeline.pdf_output import flatten_manifest_items
-from app.services.job_service import ensure_job_exists, update_job_state
+from app.services.job_service import ensure_job_exists, ensure_job_state, update_job_state
 from app.services.progress_service import update_progress, update_result
 from app.utils.files import read_json, write_json
 from app.utils.time import utc_now_iso
@@ -46,6 +50,18 @@ def _workspace_file(job_id: str, name: str) -> Path:
     return job_workspace(job_id) / name
 
 
+def _log_state_files(job_id: str, label: str) -> None:
+    paths = {
+        "job_state": job_state_path(job_id),
+        "job_config": job_config_path(job_id),
+        "progress": job_progress_path(job_id),
+        "result": job_result_path(job_id),
+        "source_pdf": job_source_pdf_path(job_id),
+    }
+    summary = " ".join(f"{name}_exists={path.exists()}" for name, path in paths.items())
+    _log(job_id, f"{label} {summary}")
+
+
 def _normalize_topic_for_api(item: dict[str, Any], index: int) -> dict[str, Any]:
     heading = item.get("heading") or item.get("raw_heading") or ""
     title = item.get("title") or item.get("raw_title") or item.get("topic_name") or ""
@@ -61,6 +77,8 @@ def _normalize_topic_for_api(item: dict[str, Any], index: int) -> dict[str, Any]
 def extract_topics_for_job(job_id: str) -> None:
     try:
         ensure_job_exists(job_id)
+        ensure_job_state(job_id)
+        _log_state_files(job_id, "extraction_start")
         config = read_json(job_config_path(job_id))
         source_pdf = Path(config["source_pdf_path"])
         if not source_pdf.exists():
@@ -71,6 +89,7 @@ def extract_topics_for_job(job_id: str) -> None:
         bundle_dir = job_workspace(job_id) / book_stem
 
         update_job_state(job_id, status=JobStatus.extracting_topics, stage="extracting_topics")
+        _log_state_files(job_id, "after_status_extracting_topics")
         update_progress(
             job_id,
             status=JobStatus.extracting_topics,
@@ -140,6 +159,8 @@ def extract_topics_for_job(job_id: str) -> None:
             current=len(topics),
             total=len(topics),
         )
+        ensure_job_state(job_id)
+        _log_state_files(job_id, "before_topic_state_writes")
 
         write_json(_workspace_file(job_id, "topics_partial.json"), {"topics": topics})
         write_json(
@@ -176,10 +197,12 @@ def extract_topics_for_job(job_id: str) -> None:
             total=len(topics),
         )
         update_job_state(job_id, status=JobStatus.reviewing_topics, stage="reviewing_topics")
+        _log_state_files(job_id, "after_success_reviewing_topics")
         _log(job_id, f"success topics={len(topics)} bundle_path={bundle_dir}")
     except Exception as exc:
         error = str(exc)
         try:
+            ensure_job_state(job_id)
             update_job_state(job_id, status=JobStatus.error, stage="extracting_topics", error=error)
             update_progress(
                 job_id,
@@ -195,6 +218,7 @@ def extract_topics_for_job(job_id: str) -> None:
                 message="Topic extraction failed.",
                 error=error,
             )
+            _log_state_files(job_id, "after_failure_error_state")
             _log(job_id, f"failure error={error}")
         except Exception:
             pass

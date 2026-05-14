@@ -14,12 +14,27 @@ class GeminiKeyError(RuntimeError):
     pass
 
 
-class GeminiAllKeysCooldownError(GeminiKeyError):
-    def __init__(self, next_available_at: str | None) -> None:
+class AllGeminiKeysCoolingDown(GeminiKeyError):
+    def __init__(
+        self,
+        next_available_at: str | None,
+        *,
+        cooldown_seconds: int,
+        usable_count: int,
+        cooldown_count: int,
+        dead_count: int,
+    ) -> None:
         self.next_available_at = next_available_at
+        self.cooldown_seconds = cooldown_seconds
+        self.usable_count = usable_count
+        self.cooldown_count = cooldown_count
+        self.dead_count = dead_count
         super().__init__(
             f"All Gemini API keys are in cooldown. Next available time: {next_available_at}."
         )
+
+
+GeminiAllKeysCooldownError = AllGeminiKeysCoolingDown
 
 
 @dataclass(frozen=True)
@@ -27,12 +42,14 @@ class ErrorClassification:
     type: str
     reason: str
     should_rotate: bool
+    cooldown_seconds: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "type": self.type,
             "reason": self.reason,
             "should_rotate": self.should_rotate,
+            "cooldown_seconds": self.cooldown_seconds,
         }
 
 
@@ -42,10 +59,12 @@ class GeminiKeyManager:
         keys: list[str],
         state_path: Path,
         cooldown_seconds: int = 300,
+        max_wait_seconds: int = 300,
     ) -> None:
         self.keys = [key.strip() for key in keys if key and key.strip()]
         self.state_path = state_path
         self.cooldown_seconds = cooldown_seconds
+        self.max_wait_seconds = max_wait_seconds
         self.state = self.load_state()
         self._normalize_current_index()
 
@@ -63,7 +82,15 @@ class GeminiKeyManager:
                 numbered_keys.append((int(match.group(1)), value.strip()))
         keys.extend(value for _, value in sorted(numbered_keys))
 
-        return cls(keys=keys, state_path=gemini_rotation_state_path())
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        return cls(
+            keys=keys,
+            state_path=gemini_rotation_state_path(),
+            cooldown_seconds=settings.gemini_cooldown_seconds,
+            max_wait_seconds=settings.gemini_max_wait_seconds,
+        )
 
     def load_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
@@ -113,11 +140,13 @@ class GeminiKeyManager:
                 cooldown_count += 1
             else:
                 usable_count += 1
+            remaining_seconds = self._remaining_cooldown_seconds(cooldown_until) if status == "cooldown" else None
             keys.append(
                 {
                     "index": index,
                     "status": status,
                     "cooldown_until": cooldown_until if status == "cooldown" else None,
+                    "remaining_seconds": remaining_seconds,
                     "dead_reason": dead_info.get("reason") if dead_info else None,
                     "last_error": self.state["last_errors"].get(index_key),
                 }
@@ -130,6 +159,8 @@ class GeminiKeyManager:
             "cooldown_count": cooldown_count,
             "dead_count": dead_count,
             "next_available_at": self._next_available_time(),
+            "default_cooldown_seconds": self.cooldown_seconds,
+            "max_wait_seconds": self.max_wait_seconds,
             "state_path": str(self.state_path),
             "keys": keys,
             "last_errors": self.state.get("last_errors", {}),
@@ -167,8 +198,7 @@ class GeminiKeyManager:
         if self._all_dead():
             raise GeminiKeyError("All Gemini API keys are marked dead.")
 
-        next_time = self._next_available_time()
-        raise GeminiAllKeysCooldownError(next_time)
+        raise self._all_cooling_down_error()
 
     def rotate_next(self) -> dict[str, Any]:
         if self.key_count() == 0:
@@ -185,8 +215,7 @@ class GeminiKeyManager:
         if self._all_dead():
             raise GeminiKeyError("All Gemini API keys are marked dead.")
 
-        next_time = self._next_available_time()
-        raise GeminiAllKeysCooldownError(next_time)
+        raise self._all_cooling_down_error()
 
     def mark_cooldown(
         self,
@@ -204,6 +233,7 @@ class GeminiKeyManager:
 
     def mark_dead(self, index: int, error: str) -> None:
         self._validate_index(index)
+        self.state["cooldowns"].pop(str(index), None)
         self.state["dead_keys"][str(index)] = {
             "reason": self._safe_error(error),
             "marked_at": utc_now_iso(),
@@ -235,14 +265,19 @@ class GeminiKeyManager:
         dead_markers = [
             "api_key_invalid",
             "api key expired",
+            "api key not valid",
             "invalid api key",
             "key expired",
             "consumer has been suspended",
             "consumer_suspended",
             "reported as leaked",
             "api key was reported as leaked",
+            "leaked",
+            "suspended",
         ]
-        if any(marker in lowered for marker in dead_markers):
+        if any(marker in lowered for marker in dead_markers) or (
+            "permission denied" in lowered and ("leaked" in lowered or "suspended" in lowered)
+        ):
             return ErrorClassification(
                 type="dead",
                 reason="Gemini API key is invalid, expired, or suspended.",
@@ -253,21 +288,31 @@ class GeminiKeyManager:
             "429",
             "quota",
             "rate limit",
+            "rate-limit",
+            "retrydelay",
+            "retry delay",
             "resource_exhausted",
             "500",
             "502",
             "503",
             "unavailable",
+            "overload",
             "timeout",
             "deadline exceeded",
+            "deadline_exceeded",
             "internal server error",
             "bad gateway",
         ]
         if any(marker in lowered for marker in cooldown_markers):
+            retry_delay_seconds = self._parse_retry_delay_seconds(text)
             return ErrorClassification(
                 type="cooldown",
                 reason="Transient Gemini quota, rate-limit, or server error.",
                 should_rotate=True,
+                cooldown_seconds=max(
+                    self.cooldown_seconds,
+                    retry_delay_seconds or 0,
+                ),
             ).as_dict()
 
         non_rotatable_markers = [
@@ -342,11 +387,30 @@ class GeminiKeyManager:
             if str(index) in self.state["dead_keys"]:
                 continue
             cooldown_until = self.state["cooldowns"].get(str(index))
-            if cooldown_until:
+            if cooldown_until and not self._cooldown_expired(cooldown_until):
                 times.append(cooldown_until)
         if not times:
             return None
         return min(times)
+
+    def _remaining_cooldown_seconds(self, cooldown_until: str | None) -> int | None:
+        if not cooldown_until:
+            return None
+        try:
+            remaining = parse_iso_datetime(cooldown_until) - parse_iso_datetime(utc_now_iso())
+        except ValueError:
+            return None
+        return max(0, int(remaining.total_seconds()))
+
+    def _all_cooling_down_error(self) -> AllGeminiKeysCoolingDown:
+        snapshot = self.safe_snapshot()
+        return AllGeminiKeysCoolingDown(
+            snapshot["next_available_at"],
+            cooldown_seconds=self.cooldown_seconds,
+            usable_count=snapshot["usable_count"],
+            cooldown_count=snapshot["cooldown_count"],
+            dead_count=snapshot["dead_count"],
+        )
 
     def _move_current_if_needed(self, changed_index: int) -> None:
         if self.key_count() == 0 or self.get_current_index() != changed_index:
@@ -363,3 +427,20 @@ class GeminiKeyManager:
             if key:
                 text = text.replace(key, "[REDACTED_KEY]")
         return text
+
+    def _parse_retry_delay_seconds(self, text: str) -> int | None:
+        patterns = [
+            r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s",
+            r"retry_delay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s",
+            r"seconds['\"]?\s*[:=]\s*(\d+)",
+            r"retry[-_ ]?after['\"]?\s*[:=]\s*['\"]?(\d+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            try:
+                return max(0, int(float(match.group(1))))
+            except (TypeError, ValueError):
+                return None
+        return None

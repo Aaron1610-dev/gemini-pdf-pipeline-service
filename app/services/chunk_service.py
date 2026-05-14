@@ -23,6 +23,7 @@ from app.pipeline.chunk_pipeline import (
 )
 from app.pipeline.gemini_runner import extract_structure_from_pdf
 from app.pipeline.prompts import build_chunk_prompt_start_head
+from app.services.gemini_cooldown_service import is_all_keys_cooldown_error, mark_waiting_for_gemini_cooldown
 from app.services.job_service import ensure_job_exists, update_job_state
 from app.services.lesson_service import _build_lesson_pdfs, _build_topic_pdfs, _write_bundle_manifest
 from app.services.progress_service import update_progress, update_result
@@ -337,6 +338,15 @@ def extract_chunks_for_job(job_id: str) -> None:
     except Exception as exc:
         error = str(exc)
         try:
+            if is_all_keys_cooldown_error(exc):
+                mark_waiting_for_gemini_cooldown(
+                    job_id,
+                    retry_stage="extracting_chunks",
+                    percent=35,
+                    exc=exc,
+                )
+                _log(job_id, "waiting_gemini_cooldown")
+                return
             update_job_state(job_id, status=JobStatus.error, stage="extracting_chunks", error=error)
             update_progress(job_id, status=JobStatus.error, stage="extracting_chunks", message=error, percent=0)
             update_result(job_id, ok=False, status=JobStatus.error, message="Chunk extraction failed.", error=error)
@@ -437,6 +447,15 @@ def extract_chunks_for_lesson(job_id: str, lesson_num: Any) -> None:
     except Exception as exc:
         error = str(exc)
         try:
+            if is_all_keys_cooldown_error(exc):
+                mark_waiting_for_gemini_cooldown(
+                    job_id,
+                    retry_stage="extracting_chunks_for_lesson",
+                    percent=35,
+                    exc=exc,
+                )
+                _log(job_id, "waiting_gemini_cooldown")
+                return
             update_job_state(job_id, status=JobStatus.error, stage="extracting_chunks_for_lesson", error=error)
             update_progress(job_id, status=JobStatus.error, stage="extracting_chunks_for_lesson", message=error, percent=0)
             update_result(job_id, ok=False, status=JobStatus.error, message="Per-lesson chunk extraction failed.", error=error)

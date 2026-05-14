@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class JobStatus(StrEnum):
     uploaded = "uploaded"
+    waiting_gemini_cooldown = "waiting_gemini_cooldown"
     extracting_topics = "extracting_topics"
     reviewing_topics = "reviewing_topics"
     extracting_lessons = "extracting_lessons"
@@ -66,6 +67,10 @@ class JobProgress(BaseModel):
     current: int
     total: int
     updated_at: str
+    next_available_at: str | None = None
+    recoverable: bool = False
+    retry_stage: str | None = None
+    cooldown_seconds: int | None = None
 
 
 class JobResult(BaseModel):

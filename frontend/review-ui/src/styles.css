@@ -401,6 +401,12 @@ input[type="checkbox"] {
   color: #3730a3;
 }
 
+.status-waiting_gemini_cooldown {
+  border-color: rgba(183, 121, 31, 0.28);
+  background: var(--warning-soft);
+  color: #8a5a06;
+}
+
 .formGrid {
   display: grid;
   gap: 12px;
@@ -3606,6 +3612,37 @@ body {
   margin: 0 auto 14px;
 }
 
+.cooldownNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: min(1280px, 100%);
+  margin: 0 auto 16px;
+  border: 1px solid rgba(183, 121, 31, 0.28);
+  border-radius: 18px;
+  background: var(--warning-soft);
+  color: #7a4b00;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-soft);
+}
+
+.cooldownNotice div {
+  display: grid;
+  gap: 3px;
+}
+
+.cooldownNotice span {
+  font-size: 13px;
+}
+
+.cooldownNotice button {
+  flex: 0 0 auto;
+  border-color: rgba(183, 121, 31, 0.34);
+  background: #ffffff;
+  color: #7a4b00;
+}
+
 @media (max-width: 980px) {
   .workspaceShell {
     grid-template-columns: 1fr;
@@ -3643,5 +3680,446 @@ body {
 
   .workspaceActions {
     justify-content: flex-start;
+  }
+}
+
+/* Topic review workspace polish */
+.workspaceContent,
+.documentContextCard,
+.appMain > .review-stepper,
+.appMain .progressBanner,
+.appMain .compactBanner,
+.appMain .inlineNotice,
+.cooldownNotice {
+  width: min(1680px, 100%);
+}
+
+.appMain {
+  padding-top: 18px;
+}
+
+.workspaceTopbar {
+  margin-bottom: 14px;
+}
+
+.documentContextCard {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+}
+
+.book-summary-card {
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.documentContextCard .source-book-thumbnail {
+  width: 64px;
+  height: 78px;
+  border-radius: 12px;
+}
+
+.documentContextCard .pdfCoverPlaceholder span {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.documentContextCard .pdfCoverPlaceholder strong,
+.documentContextCard .pdfCoverPlaceholder small {
+  font-size: 10px;
+}
+
+.appMain > .review-stepper {
+  margin-bottom: 12px;
+}
+
+.review-stepper .stepButton {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
+.topicReviewWorkspace {
+  padding: 18px;
+  overflow: visible;
+}
+
+.topicReviewHeader {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 12px;
+}
+
+.topicReviewHeader h2 {
+  margin: 4px 0 0;
+  font-size: 23px;
+}
+
+.topicReviewHeader .muted {
+  margin-top: 4px;
+}
+
+.topicSummaryChips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.topicSummaryChips span {
+  border: 1px solid #d8e4f2;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #40516b;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.topicSummaryChips strong {
+  color: var(--primary-dark);
+}
+
+.topicHeaderActions {
+  justify-content: flex-end;
+}
+
+.topicReviewLayout {
+  display: grid;
+  grid-template-columns: clamp(300px, 20vw, 340px) minmax(680px, 1fr) clamp(300px, 20vw, 340px);
+  gap: 20px;
+  align-items: start;
+}
+
+.topicReviewLayout > .split-review,
+.topicReviewLayout > .topic-split-review {
+  grid-column: auto;
+}
+
+.review-navigator.compact-topic-nav {
+  position: sticky;
+  top: 94px;
+  max-height: calc(100vh - 116px);
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.review-navigator .compactNavScroller {
+  display: grid;
+  gap: 10px;
+  max-height: calc(100vh - 190px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 3px 2px 0;
+}
+
+.review-navigator .compact-nav-item,
+.compact-nav-item {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border-radius: 13px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.compact-nav-item > div {
+  min-width: 0;
+}
+
+.compact-nav-item span,
+.review-list-item span,
+.topicListItem span {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  text-overflow: clip;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.35;
+}
+
+.compact-nav-item small {
+  margin-top: 6px;
+  font-weight: 750;
+}
+
+.compact-nav-item .inlineStatus {
+  justify-self: start;
+  margin-top: 2px;
+}
+
+.compact-nav-item.active,
+.review-list-item-active {
+  border-color: rgba(49, 91, 232, 0.7);
+  background: #eef4ff;
+  box-shadow: 0 0 0 3px rgba(49, 91, 232, 0.09);
+}
+
+.inlineStatus.done,
+.status-chip.done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.inlineStatus.pending,
+.status-chip.pending {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.topic-split-review {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topic-split-review .split-review-header {
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.topic-split-review .split-review-header h3 {
+  font-size: 18px;
+}
+
+.topic-split-review .split-review-header p {
+  font-size: 13px;
+}
+
+.previewTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: var(--shadow-soft);
+  padding: 8px;
+}
+
+.previewTabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #53657c;
+  padding: 7px 11px;
+  box-shadow: none;
+}
+
+.previewTabs button.active {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.topic-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+  overflow: visible;
+}
+
+.topic-preview-grid.mode-source,
+.topic-preview-grid.mode-extracted {
+  grid-template-columns: minmax(520px, 1fr);
+}
+
+.topic-split-review .pdf-preview-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.topic-split-review .pdfPreviewHeader {
+  min-height: 62px;
+  align-items: flex-start;
+  padding: 12px 14px;
+}
+
+.topic-split-review .pdfPreviewHeader h3 {
+  font-size: 15px;
+}
+
+.topic-split-review .pdf-frame,
+.topic-split-review .pdfMissingState,
+.topic-split-review .pdfChecking {
+  height: 740px;
+  min-height: 740px;
+}
+
+.topicMetadataRail {
+  position: sticky;
+  top: 94px;
+  min-width: 0;
+}
+
+.topicMetadataRail .loadingState,
+.topicMetadataRail .stateBox {
+  margin-bottom: 10px;
+}
+
+.topicMetadataRail .topicEditorCard {
+  position: static;
+  max-width: 340px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.topicEditorCard h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.topicEditorCard .muted {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.topicEditorGrid {
+  grid-template-columns: 1fr;
+  gap: 11px;
+  margin: 14px 0;
+}
+
+.topicEditorGrid input {
+  min-height: 40px;
+  border-radius: 10px;
+}
+
+.topicEditorGrid input:disabled {
+  background: #f4f7fb;
+  color: #64748b;
+}
+
+.successBox {
+  border: 1px solid rgba(22, 131, 74, 0.2);
+  border-radius: 12px;
+  background: var(--success-soft);
+  color: #166534;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.approvalActions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.approvalActions .approvedAction:disabled {
+  border-color: rgba(22, 131, 74, 0.24);
+  background: var(--success-soft);
+  color: #166534;
+  opacity: 1;
+}
+
+.approvalActions .nextTopicAction {
+  min-height: 44px;
+}
+
+.subtleAdvanced {
+  width: min(1680px, 100%);
+  margin: 14px auto 0;
+}
+
+.advancedTopicTableWrap {
+  width: min(1680px, 100%);
+  margin: 12px auto 0;
+}
+
+@media (max-width: 1760px) {
+  .topicReviewLayout {
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .topicMetadataRail {
+    grid-column: 2;
+    position: static;
+  }
+}
+
+@media (max-width: 1480px) {
+  .topic-split-review .pdf-frame,
+  .topic-split-review .pdfMissingState,
+  .topic-split-review .pdfChecking {
+    height: 680px;
+    min-height: 680px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .topicReviewHeader {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .topicSummaryChips,
+  .topicHeaderActions {
+    justify-content: flex-start;
+  }
+
+  .topicReviewLayout {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+
+  .topic-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-split-review .pdf-frame,
+  .topic-split-review .pdfMissingState,
+  .topic-split-review .pdfChecking {
+    height: 640px;
+    min-height: 640px;
+  }
+}
+
+@media (max-width: 860px) {
+  .topicReviewWorkspace {
+    padding: 14px;
+  }
+
+  .topicReviewLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .topicMetadataRail {
+    grid-column: 1;
+  }
+
+  .review-navigator.compact-topic-nav {
+    position: static;
+    max-height: none;
+  }
+
+  .review-navigator .compactNavScroller {
+    max-height: 360px;
+  }
+
+  .topic-preview-grid.mode-source,
+  .topic-preview-grid.mode-extracted {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-split-review .pdf-frame,
+  .topic-split-review .pdfMissingState,
+  .topic-split-review .pdfChecking {
+    height: 540px;
+    min-height: 540px;
   }
 }

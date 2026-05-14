@@ -25,10 +25,18 @@ def _debug_response(manager: GeminiKeyManager) -> dict:
     return {
         "ok": True,
         "key_count": snapshot["key_count"],
+        "total_keys": snapshot["total_keys"],
         "current_index": snapshot["current_index"],
+        "usable_count": snapshot["usable_count"],
+        "cooldown_count": snapshot["cooldown_count"],
+        "dead_count": snapshot["dead_count"],
+        "next_available_at": snapshot["next_available_at"],
+        "default_cooldown_seconds": snapshot["default_cooldown_seconds"],
+        "max_wait_seconds": snapshot["max_wait_seconds"],
         "model": get_settings().gemini_model,
         "state_path": snapshot["state_path"],
         "keys": snapshot["keys"],
+        "last_errors": snapshot["last_errors"],
     }
 
 
@@ -93,4 +101,3 @@ def clear_gemini_key_state():
     manager = _manager()
     manager.clear_runtime_state()
     return _debug_response(manager)
-

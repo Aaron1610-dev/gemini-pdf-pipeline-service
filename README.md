@@ -209,6 +209,25 @@ The state tracks:
 
 Actual key strings are never returned by debug APIs.
 
+### Prune dead Gemini keys
+
+Use this maintenance flow when `/api/debug/gemini-keys` shows permanently dead keys.
+Only keys with debug `status=dead` are removed; temporary 429 quota/rate-limit keys are kept.
+The script backs up `.env`, rewrites Gemini key entries, and backs up/removes
+`workspace/gemini_rotation_state.json` because key indexes change after pruning.
+
+```bash
+curl http://localhost:8100/api/debug/gemini-keys
+python3 tools/prune_dead_gemini_keys.py --dry-run
+python3 tools/prune_dead_gemini_keys.py
+```
+
+Restart the backend after pruning, then verify:
+
+```bash
+curl http://localhost:8100/api/debug/gemini-keys
+```
+
 ## Run
 
 ```bash

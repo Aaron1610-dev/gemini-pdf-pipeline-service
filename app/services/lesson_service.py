@@ -11,6 +11,7 @@ from pypdf import PdfReader, PdfWriter
 from app.core.logging import append_job_log
 from app.core.paths import job_config_path, job_log_path, job_workspace, output_root
 from app.models.job_models import JobStatus
+from app.services.gemini_cooldown_service import is_all_keys_cooldown_error, mark_waiting_for_gemini_cooldown
 from app.services.job_service import ensure_job_exists, update_job_state
 from app.services.lesson_metadata_service import save_lesson_metadata_for_job
 from app.services.progress_service import update_progress, update_result
@@ -487,6 +488,15 @@ def extract_lessons_for_job(job_id: str) -> None:
     except Exception as exc:
         error = str(exc)
         try:
+            if is_all_keys_cooldown_error(exc):
+                mark_waiting_for_gemini_cooldown(
+                    job_id,
+                    retry_stage="extracting_lessons",
+                    percent=35,
+                    exc=exc,
+                )
+                _log(job_id, "waiting_gemini_cooldown")
+                return
             update_job_state(job_id, status=JobStatus.error, stage="extracting_lessons", error=error)
             update_progress(
                 job_id,
@@ -643,6 +653,15 @@ def extract_lessons_for_topic(job_id: str, topic_num: Any) -> None:
     except Exception as exc:
         error = str(exc)
         try:
+            if is_all_keys_cooldown_error(exc):
+                mark_waiting_for_gemini_cooldown(
+                    job_id,
+                    retry_stage="extracting_lessons_for_topic",
+                    percent=35,
+                    exc=exc,
+                )
+                _log(job_id, "waiting_gemini_cooldown")
+                return
             update_job_state(job_id, status=JobStatus.error, stage="extracting_lessons_for_topic", error=error)
             update_progress(
                 job_id,

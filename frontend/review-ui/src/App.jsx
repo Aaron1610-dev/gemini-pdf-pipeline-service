@@ -32,6 +32,7 @@ import {
   listJobs,
   prepareBundle,
   recutChunk,
+  retryGeminiStage,
   saveChunks,
   saveLessons,
   saveTopics,
@@ -114,6 +115,7 @@ export default function App() {
   const [rawOpen, setRawOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const pollRef = useRef(null);
+  const topicAutoLoadRef = useRef("");
 
   useEffect(() => {
     checkHealth();
@@ -126,6 +128,29 @@ export default function App() {
       loadSelectedJob(selectedJobId);
     }
   }, [selectedJobId]);
+
+  useEffect(() => {
+    if (!selectedJobId || activeStep !== WORKFLOW_STEPS.topics || detailsLoading) return;
+    const hasLoadedTopics = Array.isArray(topics);
+    const shouldReloadKnownTopics = Boolean(status?.can_review_topics || job?.can_review_topics) && (!hasLoadedTopics || topics.length === 0);
+    if (hasLoadedTopics && !shouldReloadKnownTopics) return;
+    const topicCountHint = status?.topic_count ?? job?.topic_count ?? "unknown";
+    const autoLoadKey = `${selectedJobId}:${job?.status || status?.status || "unknown"}:${topicCountHint}`;
+    if (topicAutoLoadRef.current === autoLoadKey) return;
+    topicAutoLoadRef.current = autoLoadKey;
+    loadTopics({ silent: true });
+  }, [
+    selectedJobId,
+    activeStep,
+    detailsLoading,
+    job?.status,
+    status?.status,
+    status?.can_review_topics,
+    status?.topic_count,
+    job?.can_review_topics,
+    job?.topic_count,
+    topics,
+  ]);
 
   function stopPolling() {
     if (pollRef.current) {
@@ -152,7 +177,13 @@ export default function App() {
     }, 2000);
   }
 
-  function inferStepFromStatus(value) {
+  function inferStepFromStatus(value, stageValue = "") {
+    const stage = String(stageValue || "").toLowerCase();
+    if (value === "waiting_gemini_cooldown") {
+      if (stage.includes("lesson")) return WORKFLOW_STEPS.lessons;
+      if (stage.includes("chunk")) return WORKFLOW_STEPS.chunks;
+      return WORKFLOW_STEPS.topics;
+    }
     if (value === "uploaded") return WORKFLOW_STEPS.topics;
     if (value === "extracting_topics" || value === "reviewing_topics") return WORKFLOW_STEPS.topics;
     if (value === "extracting_lessons" || value === "reviewing_lessons") return WORKFLOW_STEPS.lessons;
@@ -211,7 +242,7 @@ export default function App() {
       setJob(jobData);
       setStatus(statusData);
       if (!options.keepReview) resetReviewData();
-      if (!options.keepStep) setActiveStep(inferStepFromStatus(jobData?.status || statusData?.status));
+      if (!options.keepStep) setActiveStep(inferStepFromStatus(jobData?.status || statusData?.status, jobData?.stage || statusData?.stage));
       if (logsData?.log) setLogs(logsData.log);
       if (BUSY_STATUSES.has(statusData?.status)) startPolling();
     } catch (err) {
@@ -224,6 +255,7 @@ export default function App() {
   }
 
   function resetReviewData() {
+    topicAutoLoadRef.current = "";
     setTopics(null);
     setTopicsApproved(false);
     setTopicsError("");
@@ -274,20 +306,20 @@ export default function App() {
     }
   }
 
-  async function loadTopics() {
+  async function loadTopics(options = {}) {
     if (!selectedJobId) return;
     setTopicsError("");
-    setActionLoading(true);
+    if (!options.silent) setActionLoading(true);
     try {
       const response = await getTopics(selectedJobId);
-      setTopics(itemsFromResponse(response, "topics"));
+      setTopics(Array.isArray(response?.topics) ? response.topics : itemsFromResponse(response, "topics"));
       setTopicsApproved(Boolean(response?.approved));
       setActiveStep(WORKFLOW_STEPS.topics);
     } catch (err) {
-      setTopics(null);
+      if (!options.silent) setTopics(null);
       setTopicsError(err.message);
     } finally {
-      setActionLoading(false);
+      if (!options.silent) setActionLoading(false);
     }
   }
 
@@ -438,11 +470,19 @@ export default function App() {
 
   const backendOk = healthInfo?.status === "ok";
   const selectedStatus = job?.status || status?.status;
+  const isGeminiCooldown = selectedStatus === "waiting_gemini_cooldown" || /all gemini api keys are in cooldown|gemini api key đang tạm cooldown|tất cả gemini/i.test(`${status?.message || ""} ${job?.error || ""}`);
+  const geminiCooldownSeconds = status?.cooldown_seconds || 300;
   const isBusy = actionLoading || BUSY_STATUSES.has(selectedStatus);
   const shortJobId = selectedJobId ? `${selectedJobId.slice(0, 8)}...${selectedJobId.slice(-4)}` : "-";
   const rawData = {
     job,
     status,
+    topic_debug: {
+      topics_partial_exists: Boolean(status?.topics_partial_exists || job?.topics_partial_exists || status?.has_topics || job?.has_topics),
+      topic_count: status?.topic_count ?? job?.topic_count ?? (Array.isArray(topics) ? topics.length : 0),
+      current_status: selectedStatus,
+      can_review_topics: Boolean(status?.can_review_topics || job?.can_review_topics || (Array.isArray(topics) && topics.length > 0)),
+    },
     topics,
     lessons,
     chunks,
@@ -585,6 +625,30 @@ export default function App() {
         {healthError ? <div className="warningBox inlineNotice">{healthError}</div> : null}
         {successMessage ? <div className="successBanner compactBanner">{successMessage}</div> : null}
         {selectedJobId && isBusy ? <ProgressBanner status={status} fallback="Đang xử lý dữ liệu..." /> : null}
+        {selectedJobId && isGeminiCooldown ? (
+          <div className="cooldownNotice">
+            <div>
+              <strong>Tất cả Gemini API key đang tạm nghỉ.</strong>
+              <span>
+                Hệ thống sẽ thử lại sau khi cooldown kết thúc.
+              </span>
+              <span>
+                Thời gian chờ dự kiến: {geminiCooldownSeconds} giây
+                {status?.next_available_at ? ` · Khả dụng lại: ${status.next_available_at}` : ""}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => runAction(() => retryGeminiStage(selectedJobId), {
+                success: "Đã bắt đầu thử lại bước Gemini.",
+                reload: async () => startPolling(),
+              })}
+              disabled={actionLoading}
+            >
+              Thử lại ngay
+            </button>
+          </div>
+        ) : null}
 
         {!selectedJobId || activeStep === WORKFLOW_STEPS.upload ? (
           <section className="workspaceUpload">
@@ -822,6 +886,15 @@ export default function App() {
               <dt>Backend</dt><dd className="mono breakText">{API_BASE_URL}</dd>
               <dt>Source</dt><dd className="mono breakText">{selectedJobId ? getSourcePreviewUrl(selectedJobId) : "-"}</dd>
               <dt>Object key</dt><dd className="mono breakText">{job?.minio?.subject_object_key || "-"}</dd>
+            </dl>
+          </section>
+          <section className="panel inspectorCard">
+            <h3>Debug chủ đề</h3>
+            <dl className="statusGrid">
+              <dt>topics_partial</dt><dd>{rawData.topic_debug.topics_partial_exists ? "Có" : "Không"}</dd>
+              <dt>Số topic</dt><dd>{rawData.topic_debug.topic_count}</dd>
+              <dt>Status</dt><dd>{rawData.topic_debug.current_status || "-"}</dd>
+              <dt>Cho phép duyệt</dt><dd>{rawData.topic_debug.can_review_topics ? "Có" : "Không"}</dd>
             </dl>
           </section>
           <StatusPanel job={job} status={status} />

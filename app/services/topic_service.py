@@ -25,6 +25,7 @@ from app.models.job_models import JobStatus
 from app.pipeline.les_top_pipeline import run_extract_save_split
 from app.pipeline.pdf_output import flatten_manifest_items
 from app.services.job_service import ensure_job_exists, ensure_job_state, update_job_state
+from app.services.gemini_cooldown_service import is_all_keys_cooldown_error, mark_waiting_for_gemini_cooldown
 from app.services.progress_service import update_progress, update_result
 from app.services.topic_metadata_service import save_topic_metadata_for_job
 from app.utils.files import read_json, write_json
@@ -444,6 +445,16 @@ def extract_topics_for_job(job_id: str) -> None:
         error = str(exc)
         try:
             ensure_job_state(job_id)
+            if is_all_keys_cooldown_error(exc):
+                mark_waiting_for_gemini_cooldown(
+                    job_id,
+                    retry_stage="extracting_topics",
+                    percent=35,
+                    exc=exc,
+                )
+                _log_state_files(job_id, "after_waiting_gemini_cooldown")
+                _log(job_id, "waiting_gemini_cooldown")
+                return
             update_job_state(job_id, status=JobStatus.error, stage="extracting_topics", error=error)
             update_progress(
                 job_id,

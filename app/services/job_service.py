@@ -217,6 +217,43 @@ def _read_json_optional(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _topic_review_summary(job_id: str) -> dict:
+    topics_path = job_workspace(job_id) / "topics_partial.json"
+    approved_path = job_workspace(job_id) / "approved_topics.json"
+    topics: list = []
+    approved_topics: list = []
+
+    if topics_path.exists():
+        raw_topics = read_json(topics_path)
+        topics = raw_topics.get("topics", raw_topics) if isinstance(raw_topics, dict) else raw_topics
+        if not isinstance(topics, list):
+            topics = []
+
+    if approved_path.exists():
+        raw_approved = read_json(approved_path)
+        if isinstance(raw_approved, dict):
+            approved_nums = raw_approved.get("approved_topic_nums") or []
+            if approved_nums:
+                approved_topics = approved_nums
+            else:
+                raw_topics = raw_approved.get("topics") or []
+                approved_topics = [topic for topic in raw_topics if isinstance(topic, dict) and topic.get("approved")]
+        elif isinstance(raw_approved, list):
+            approved_topics = [topic for topic in raw_approved if not isinstance(topic, dict) or topic.get("approved")]
+        if not isinstance(approved_topics, list):
+            approved_topics = []
+
+    topic_count = len(topics)
+    return {
+        "topics_partial_exists": topics_path.exists(),
+        "approved_topics_exists": approved_path.exists(),
+        "has_topics": topic_count > 0,
+        "topic_count": topic_count,
+        "approved_topic_count": len(approved_topics),
+        "can_review_topics": topic_count > 0,
+    }
+
+
 def ensure_job_state(job_id: str) -> dict:
     workspace = job_workspace(job_id)
     state_path = job_state_path(job_id)
@@ -269,6 +306,7 @@ def ensure_job_state(job_id: str) -> dict:
 def get_job(job_id: str) -> dict:
     ensure_job_exists(job_id)
     state = read_json(job_state_path(job_id))
+    state.update(_topic_review_summary(job_id))
     state["paths"] = {
         "workspace_path": str(job_workspace(job_id)),
         "source_pdf_path": str(job_source_pdf_path(job_id)),
@@ -308,6 +346,7 @@ def list_jobs() -> dict:
                 "updated_at": state.get("updated_at"),
                 "error": state.get("error"),
                 "minio": state.get("minio"),
+                **_topic_review_summary(job_id),
             }
         )
     jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
@@ -338,6 +377,7 @@ def get_status(job_id: str) -> dict:
     progress["state_stage"] = state.get("stage")
     progress["recovered"] = bool(state.get("recovered"))
     progress["recovery_reason"] = state.get("recovery_reason")
+    progress.update(_topic_review_summary(job_id))
     return progress
 
 

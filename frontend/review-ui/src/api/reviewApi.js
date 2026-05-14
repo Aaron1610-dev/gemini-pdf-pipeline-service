@@ -55,12 +55,35 @@ export function getLogs(jobId, lines = 200) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/logs?lines=${encodeURIComponent(lines)}`);
 }
 
+export function retryGeminiStage(jobId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/retry-gemini-stage`, { method: "POST" });
+}
+
 export function extractTopics(jobId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/extract/topics`, { method: "POST" });
 }
 
-export function getTopics(jobId) {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}/topics`);
+export async function getTopics(jobId) {
+  const raw = await request(`/api/jobs/${encodeURIComponent(jobId)}/topics`);
+  const nested = raw?.data && typeof raw.data === "object" ? raw.data : {};
+  const topics =
+    Array.isArray(raw?.topics) ? raw.topics :
+    Array.isArray(nested?.topics) ? nested.topics :
+    Array.isArray(raw) ? raw :
+    [];
+  return {
+    ...raw,
+    ok: raw?.ok !== false,
+    topics,
+    approved: Boolean(raw?.approved ?? raw?.approved_all ?? nested?.approved ?? nested?.approved_all),
+    approved_topic_nums: Array.isArray(raw?.approved_topic_nums)
+      ? raw.approved_topic_nums
+      : Array.isArray(nested?.approved_topic_nums) ? nested.approved_topic_nums : [],
+    pending_topic_nums: Array.isArray(raw?.pending_topic_nums)
+      ? raw.pending_topic_nums
+      : Array.isArray(nested?.pending_topic_nums) ? nested.pending_topic_nums : [],
+    raw,
+  };
 }
 
 export function getTopicPreviewUrl(jobId, topicNum) {

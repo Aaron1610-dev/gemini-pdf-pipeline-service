@@ -19,6 +19,12 @@ export default function StatusPanel({ status, job }) {
         <dd>{percent}%</dd>
         <dt>Thông báo</dt>
         <dd>{status?.message || "-"}</dd>
+        <dt>Cooldown</dt>
+        <dd>
+          {status?.status === "waiting_gemini_cooldown"
+            ? `Dự kiến ${status?.cooldown_seconds || 300} giây${status?.next_available_at ? ` · ${status.next_available_at}` : ""}`
+            : status?.next_available_at || "-"}
+        </dd>
         <dt>MinIO</dt>
         <dd>{job?.minio?.subject_asset_uploaded ? `Đã upload ${job.minio.bucket}` : "-"}</dd>
         <dt>PDF nguồn</dt>

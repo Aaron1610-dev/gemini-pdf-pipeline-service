@@ -46,6 +46,10 @@ def update_progress(
     percent: int = 0,
     current: int = 0,
     total: int = 0,
+    next_available_at: str | None = None,
+    recoverable: bool = False,
+    retry_stage: str | None = None,
+    cooldown_seconds: int | None = None,
 ) -> JobProgress:
     progress = JobProgress(
         job_id=job_id,
@@ -56,6 +60,10 @@ def update_progress(
         current=current,
         total=total,
         updated_at=utc_now_iso(),
+        next_available_at=next_available_at,
+        recoverable=recoverable,
+        retry_stage=retry_stage,
+        cooldown_seconds=cooldown_seconds,
     )
     write_progress(progress)
     return progress

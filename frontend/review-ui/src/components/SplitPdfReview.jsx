@@ -116,6 +116,7 @@ function PdfPreviewCard({
 }
 
 export default function SplitPdfReview({
+  variant = "default",
   title,
   description,
   sourcePreviewUrl,
@@ -131,8 +132,33 @@ export default function SplitPdfReview({
   extractedDebugCandidates,
   children,
 }) {
+  const [activePreview, setActivePreview] = useState("compare");
+  const isTopicVariant = variant === "topic";
+  const sourceCard = (
+    <PdfPreviewCard
+      kind="source"
+      label={sourceLabel}
+      url={sourcePreviewUrl}
+      pageHint={sourcePageHint}
+      missingMessage="Không hiển thị được sách gốc."
+      missingDetail="Hãy thử tải lại preview."
+      onLoadKey={sourcePreviewUrl}
+    />
+  );
+  const extractedCard = (
+    <PdfPreviewCard
+      kind="extracted"
+      label={extractedLabel}
+      url={extractedPreviewUrl}
+      pageHint={extractedPageHint}
+      missingMessage={missingExtractedMessage || "Không tìm thấy PDF chủ đề."}
+      missingDetail={missingExtractedDetail || "Có thể cần trích xuất lại chủ đề."}
+      onLoadKey={extractedPreviewUrl}
+    />
+  );
+
   return (
-    <section className="split-review">
+    <section className={`split-review ${isTopicVariant ? "topic-split-review" : ""}`}>
       <div className="split-review-header">
         <div>
           <h3>{title}</h3>
@@ -142,26 +168,24 @@ export default function SplitPdfReview({
           <div className="splitStatusSlot">{extractedStatusBadge}</div>
         ) : null}
       </div>
-      <div className="split-preview-grid">
-        <PdfPreviewCard
-          kind="source"
-          label={sourceLabel}
-          url={sourcePreviewUrl}
-          pageHint={sourcePageHint}
-          missingMessage="Chưa hiển thị được sách gốc"
-          missingDetail="File PDF đã được lưu, nhưng preview chưa sẵn sàng. Bạn có thể thử tải lại hoặc mở Debug."
-          onLoadKey={sourcePreviewUrl}
-        />
-        <PdfPreviewCard
-          kind="extracted"
-          label={extractedLabel}
-          url={extractedPreviewUrl}
-          pageHint={extractedPageHint}
-          missingMessage={missingExtractedMessage}
-          missingDetail={missingExtractedDetail}
-          onLoadKey={extractedPreviewUrl}
-        />
-      </div>
+      {isTopicVariant ? (
+        <>
+          <div className="previewTabs" role="tablist" aria-label="Chế độ xem PDF">
+            <button type="button" className={activePreview === "source" ? "active" : ""} onClick={() => setActivePreview("source")}>Sách gốc</button>
+            <button type="button" className={activePreview === "extracted" ? "active" : ""} onClick={() => setActivePreview("extracted")}>Topic đã trích xuất</button>
+            <button type="button" className={activePreview === "compare" ? "active" : ""} onClick={() => setActivePreview("compare")}>So sánh</button>
+          </div>
+          <div className={`split-preview-grid topic-preview-grid mode-${activePreview}`}>
+            {activePreview !== "extracted" ? sourceCard : null}
+            {activePreview !== "source" ? extractedCard : null}
+          </div>
+        </>
+      ) : (
+        <div className="split-preview-grid">
+          {sourceCard}
+          {extractedCard}
+        </div>
+      )}
       {children ? <div className="review-metadata-panel">{children}</div> : null}
     </section>
   );

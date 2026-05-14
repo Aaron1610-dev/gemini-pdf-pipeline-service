@@ -18,6 +18,8 @@ class Settings:
     output_dir: Path
     log_dir: Path
     gemini_model: str
+    gemini_cooldown_seconds: int
+    gemini_max_wait_seconds: int
     mongo_uri: str
     mongo_db_name: str
     allow_old_metadata_db_write: bool
@@ -47,6 +49,8 @@ def get_settings() -> Settings:
         output_dir=Path(os.getenv("OUTPUT_DIR", "./output")),
         log_dir=Path(os.getenv("LOG_DIR", "./logs")),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        gemini_cooldown_seconds=int(os.getenv("GEMINI_COOLDOWN_SECONDS", "300")),
+        gemini_max_wait_seconds=int(os.getenv("GEMINI_MAX_WAIT_SECONDS", "300")),
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db_name=os.getenv("MONGO_DB_NAME", "data-ai-tra-cuu"),
         allow_old_metadata_db_write=os.getenv("ALLOW_OLD_METADATA_DB_WRITE", "false").lower() in {"1", "true", "yes", "on"},

@@ -1,5 +1,6 @@
 const LABELS = {
   uploaded: "Đã tải sách",
+  waiting_gemini_cooldown: "Chờ Gemini cooldown",
   extracting_topics: "Đang trích xuất chủ đề",
   reviewing_topics: "Chờ duyệt chủ đề",
   extracting_lessons: "Đang trích xuất bài học",

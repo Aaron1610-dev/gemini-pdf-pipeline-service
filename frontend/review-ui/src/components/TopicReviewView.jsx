@@ -51,7 +51,8 @@ export default function TopicReviewView({
 
   const approvedCount = safeTopics.filter((topic) => topic.approved || topic.metadata_edu_saved).length;
   const pendingCount = Math.max(safeTopics.length - approvedCount, 0);
-  const isExtracting = jobStatus === "extracting_topics" || status?.status === "extracting_topics";
+  const isCooldown = jobStatus === "waiting_gemini_cooldown" || status?.status === "waiting_gemini_cooldown";
+  const isExtracting = jobStatus === "extracting_topics" || status?.status === "extracting_topics" || isCooldown;
   const selectedTopic = safeTopics[Math.min(selectedIndex, Math.max(safeTopics.length - 1, 0))] || null;
   const selectedTopicNum = selectedTopic?.topic_num;
   const previewUrl = useMemo(() => {
@@ -124,12 +125,19 @@ export default function TopicReviewView({
         <div>
           <span className="stepLabel">Bước 2</span>
           <h2>Bước 2: Duyệt chủ đề</h2>
-          <p className="muted">Đối chiếu sách gốc với PDF chủ đề đã được AI cắt ra.</p>
+          <p className="muted">Chọn từng chủ đề, đối chiếu sách gốc với PDF đã cắt và lưu metadata.</p>
         </div>
+        {safeTopics.length > 0 ? (
+          <div className="topicSummaryChips" aria-label="Tổng quan chủ đề">
+            <span>Tổng chủ đề: <strong>{safeTopics.length}</strong></span>
+            <span>Đã duyệt: <strong>{approvedCount}/{safeTopics.length}</strong></span>
+            <span>Chưa duyệt: <strong>{pendingCount}</strong></span>
+          </div>
+        ) : null}
         {safeTopics.length > 0 ? (
           <div className="topicHeaderActions">
             <button type="button" className="secondary-action" onClick={onExtract} disabled={loading || approving}>
-              Trích xuất lại
+              Trích xuất lại chủ đề
             </button>
             <button type="button" className="secondary-action" onClick={onLoad} disabled={loading || approving}>Tải lại</button>
           </div>
@@ -142,9 +150,9 @@ export default function TopicReviewView({
 
       {isExtracting && safeTopics.length === 0 ? (
         <ProcessingState
-          title="Đang trích xuất chủ đề"
-          message="Hệ thống đang phân tích sách giáo khoa và chuẩn bị dữ liệu duyệt chủ đề."
-          detail="Bạn có thể mở Debug nếu muốn xem log chi tiết."
+          title={isCooldown ? "Gemini đang cooldown" : "Đang trích xuất chủ đề"}
+          message={isCooldown ? "Chưa có dữ liệu chủ đề khả dụng. Hệ thống sẽ thử lại khi Gemini sẵn sàng." : "Hệ thống đang phân tích sách giáo khoa và chuẩn bị dữ liệu duyệt chủ đề."}
+          detail={isCooldown ? "Nếu dữ liệu chủ đề đã tồn tại, bấm Tải lại hoặc kiểm tra Debug." : "Bạn có thể mở Debug nếu muốn xem log chi tiết."}
           status={status}
         />
       ) : null}
@@ -155,15 +163,11 @@ export default function TopicReviewView({
 
       {safeTopics.length > 0 ? (
         <>
-          <div className="summaryCards">
-            <div className="summaryCard"><span>Tổng chủ đề</span><strong>{safeTopics.length}</strong></div>
-            <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}</strong></div>
-            <div className="summaryCard"><span>Chưa duyệt</span><strong>{pendingCount}</strong></div>
-          </div>
           <div className="review-workspace topicReviewLayout">
             <TopicList topics={safeTopics} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
             <SplitPdfReview
-              title="Sách gốc → PDF chủ đề → Metadata"
+              variant="topic"
+              title="Sách gốc → PDF chủ đề"
               description="Sách giáo khoa gốc ở bên trái, kết quả trích xuất của topic đang chọn ở bên phải."
               sourcePreviewUrl={sourcePreviewUrl}
               extractedPreviewUrl={extractedPreviewUrl}
@@ -180,9 +184,10 @@ export default function TopicReviewView({
               missingExtractedDetail={
                 previewInfo?.topics_extracted === false
                   ? "Hãy trích xuất chủ đề trước. Nếu đã trích xuất, kiểm tra Debug để xem đường dẫn preview."
-                  : "Hãy trích xuất chủ đề trước. Nếu đã trích xuất, kiểm tra Debug để xem đường dẫn preview."
+                  : "Vẫn có thể duyệt metadata topic này. Kiểm tra Debug nếu cần xem đường dẫn preview."
               }
-            >
+            />
+            <div className="review-metadata-panel topicMetadataRail">
               {previewLoading ? <LoadingState message="Đang tải thông tin preview..." /> : null}
               <TopicEditorCard
                 topic={selectedTopic}
@@ -192,7 +197,7 @@ export default function TopicReviewView({
                 onApprove={approveSelected}
                 onExtractLessons={onExtractLessonsForTopic}
               />
-            </SplitPdfReview>
+            </div>
           </div>
         </>
       ) : null}
@@ -331,40 +336,41 @@ function TopicList({ topics, selectedIndex, onSelect }) {
 
 function TopicEditorCard({ topic, loading, onUpdate, onSave, onApprove, onExtractLessons }) {
   if (!topic) return null;
+  const isApproved = Boolean(topic.approved || topic.metadata_edu_saved || topic.minio_uploaded);
   return (
     <section className="topicEditorCard review-editor">
       <div>
         <h3>Metadata chủ đề</h3>
-        <p className="muted">Chỉnh sửa metadata của topic đang chọn trước khi lưu.</p>
+        <p className="muted">Kiểm tra và chỉnh sửa thông tin trước khi lưu.</p>
       </div>
       <div className="topicEditorGrid">
         <label>
           <span>Số topic</span>
-          <input type="number" value={topic.topic_num ?? ""} disabled={topic.approved} onChange={(event) => onUpdate("topic_num", Number(event.target.value))} />
+          <input type="number" value={topic.topic_num ?? ""} disabled={isApproved} onChange={(event) => onUpdate("topic_num", Number(event.target.value))} />
         </label>
         <label className="wide">
           <span>Tên chủ đề</span>
-          <input type="text" value={topic.topic_name ?? ""} disabled={topic.approved} onChange={(event) => onUpdate("topic_name", event.target.value)} />
+          <input type="text" value={topic.topic_name ?? ""} disabled={isApproved} onChange={(event) => onUpdate("topic_name", event.target.value)} />
         </label>
         <label>
           <span>Trang bắt đầu</span>
-          <input type="number" value={topic.start ?? ""} disabled={topic.approved} onChange={(event) => onUpdate("start", Number(event.target.value))} />
+          <input type="number" value={topic.start ?? ""} disabled={isApproved} onChange={(event) => onUpdate("start", Number(event.target.value))} />
         </label>
         <label>
           <span>Trang kết thúc</span>
-          <input type="number" value={topic.end ?? ""} disabled={topic.approved} onChange={(event) => onUpdate("end", Number(event.target.value))} />
+          <input type="number" value={topic.end ?? ""} disabled={isApproved} onChange={(event) => onUpdate("end", Number(event.target.value))} />
         </label>
       </div>
-      {topic.metadata_edu_saved || topic.minio_uploaded ? (
-        <div className="successBox">Đã lưu Topic vào MongoDB và MinIO.</div>
+      {isApproved ? (
+        <div className="successBox">Topic này đã được lưu vào MongoDB và MinIO.</div>
       ) : null}
       <div className="approvalActions">
-        <button type="button" className="secondary-action" onClick={onSave} disabled={loading || topic.approved}>Lưu chỉnh sửa</button>
-        <button type="button" className="primaryButton primary-action" onClick={onApprove} disabled={loading || topic.approved}>
-          Duyệt topic này
+        <button type="button" className="secondary-action" onClick={onSave} disabled={loading || isApproved}>Lưu chỉnh sửa</button>
+        <button type="button" className={isApproved ? "secondary-action approvedAction" : "primaryButton primary-action"} onClick={onApprove} disabled={loading || isApproved}>
+          {isApproved ? "Đã duyệt topic" : "Duyệt topic này"}
         </button>
-        {topic.approved ? (
-          <button type="button" className="primaryButton" onClick={() => onExtractLessons?.(topic)} disabled={loading}>
+        {isApproved ? (
+          <button type="button" className="primaryButton primary-action nextTopicAction" onClick={() => onExtractLessons?.(topic)} disabled={loading}>
             Trích xuất bài học topic này
           </button>
         ) : null}

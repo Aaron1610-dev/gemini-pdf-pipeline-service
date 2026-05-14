@@ -1,12 +1,17 @@
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from app.api.routes_assets import asset_head_response, validate_object_key, _stream_minio_object
 from app.core.config import get_settings
 from app.core.paths import job_config_path, job_result_path, job_source_pdf_path, job_state_path
-from app.services.job_service import create_job, debug_job_files, get_job, get_status, list_jobs
+from app.models.job_models import JobStatus
+from app.services.chunk_service import ensure_chunk_preconditions, extract_chunks_for_job
+from app.services.job_service import create_job, debug_job_files, get_job, get_status, list_jobs, update_job_state
+from app.services.lesson_service import ensure_lesson_preconditions, extract_lessons_for_job
+from app.services.progress_service import update_progress
+from app.services.topic_service import extract_topics_for_job
 from app.utils.files import read_json
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -53,6 +58,56 @@ def read_job_status(job_id: str):
 @router.get("/{job_id}/debug-files")
 def read_job_debug_files(job_id: str):
     return debug_job_files(job_id)
+
+
+@router.post("/{job_id}/retry-gemini-stage")
+@router.post("/{job_id}/retry-current-stage")
+def retry_current_stage(job_id: str, background_tasks: BackgroundTasks):
+    current = get_status(job_id)
+    status_value = current.get("status")
+    stage = current.get("state_stage") or current.get("stage") or ""
+    if status_value not in {JobStatus.error.value, JobStatus.waiting_gemini_cooldown.value}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Chỉ có thể thử lại khi job đang lỗi hoặc chờ Gemini cooldown.",
+        )
+
+    if "topic" in stage:
+        update_job_state(job_id, status=JobStatus.extracting_topics, stage="extracting_topics")
+        update_progress(job_id, status=JobStatus.extracting_topics, stage="extracting_topics", message="Đang thử lại trích xuất chủ đề...", percent=5)
+        background_tasks.add_task(extract_topics_for_job, job_id)
+        retry_status = JobStatus.extracting_topics
+    elif "lesson" in stage:
+        try:
+            ensure_lesson_preconditions(job_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        update_job_state(job_id, status=JobStatus.extracting_lessons, stage="extracting_lessons")
+        update_progress(job_id, status=JobStatus.extracting_lessons, stage="extracting_lessons", message="Đang thử lại trích xuất bài học...", percent=5)
+        background_tasks.add_task(extract_lessons_for_job, job_id)
+        retry_status = JobStatus.extracting_lessons
+    elif "chunk" in stage:
+        try:
+            ensure_chunk_preconditions(job_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        update_job_state(job_id, status=JobStatus.extracting_chunks, stage="extracting_chunks")
+        update_progress(job_id, status=JobStatus.extracting_chunks, stage="extracting_chunks", message="Đang thử lại trích xuất chunk...", percent=5)
+        background_tasks.add_task(extract_chunks_for_job, job_id)
+        retry_status = JobStatus.extracting_chunks
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Không xác định được bước Gemini cần thử lại từ stage: {stage}",
+        )
+
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "status": retry_status,
+        "stage": stage,
+        "message": "Đã bắt đầu thử lại bước Gemini.",
+    }
 
 
 def _source_minio_key(job_id: str) -> str | None:

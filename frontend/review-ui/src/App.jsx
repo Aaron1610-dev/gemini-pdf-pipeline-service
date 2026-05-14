@@ -116,6 +116,8 @@ export default function App() {
   const [debugOpen, setDebugOpen] = useState(false);
   const pollRef = useRef(null);
   const topicAutoLoadRef = useRef("");
+  const lessonAutoLoadRef = useRef("");
+  const chunkAutoLoadRef = useRef("");
 
   useEffect(() => {
     checkHealth();
@@ -150,6 +152,60 @@ export default function App() {
     job?.can_review_topics,
     job?.topic_count,
     topics,
+  ]);
+
+  useEffect(() => {
+    if (!selectedJobId || activeStep !== WORKFLOW_STEPS.lessons || detailsLoading) return;
+    const hasLoadedLessons = Array.isArray(lessons);
+    const shouldReloadKnownLessons = Boolean(status?.can_review_lessons || job?.can_review_lessons) && (!hasLoadedLessons || lessons.length === 0);
+    if (hasLoadedLessons && !shouldReloadKnownLessons) return;
+    const lessonCountHint = status?.lesson_count ?? job?.lesson_count ?? "unknown";
+    const topicHint = status?.current_topic_num ?? job?.current_topic_num ?? selectedTopicNum ?? "all";
+    const autoLoadKey = `${selectedJobId}:${job?.status || status?.status || "unknown"}:${lessonCountHint}:${topicHint}`;
+    if (lessonAutoLoadRef.current === autoLoadKey) return;
+    lessonAutoLoadRef.current = autoLoadKey;
+    loadLessons({ silent: true });
+  }, [
+    selectedJobId,
+    activeStep,
+    detailsLoading,
+    job?.status,
+    status?.status,
+    status?.can_review_lessons,
+    status?.lesson_count,
+    status?.current_topic_num,
+    job?.can_review_lessons,
+    job?.lesson_count,
+    job?.current_topic_num,
+    selectedTopicNum,
+    lessons,
+  ]);
+
+  useEffect(() => {
+    if (!selectedJobId || activeStep !== WORKFLOW_STEPS.chunks || detailsLoading) return;
+    const hasLoadedChunks = Array.isArray(chunks);
+    const shouldReloadKnownChunks = Boolean(status?.can_review_chunks || job?.can_review_chunks) && (!hasLoadedChunks || chunks.length === 0);
+    if (hasLoadedChunks && !shouldReloadKnownChunks) return;
+    const chunkCountHint = status?.chunk_count ?? job?.chunk_count ?? "unknown";
+    const lessonHint = status?.current_lesson_num ?? job?.current_lesson_num ?? selectedLessonNum ?? "all";
+    const autoLoadKey = `${selectedJobId}:${job?.status || status?.status || "unknown"}:${chunkCountHint}:${lessonHint}`;
+    if (chunkAutoLoadRef.current === autoLoadKey) return;
+    chunkAutoLoadRef.current = autoLoadKey;
+    loadChunks({ silent: true });
+  }, [
+    selectedJobId,
+    activeStep,
+    detailsLoading,
+    job?.status,
+    status?.status,
+    status?.can_review_chunks,
+    status?.chunk_count,
+    status?.current_lesson_num,
+    job?.can_review_chunks,
+    job?.chunk_count,
+    job?.current_lesson_num,
+    selectedLessonNum,
+    chunks,
   ]);
 
   function stopPolling() {
@@ -256,6 +312,8 @@ export default function App() {
 
   function resetReviewData() {
     topicAutoLoadRef.current = "";
+    lessonAutoLoadRef.current = "";
+    chunkAutoLoadRef.current = "";
     setTopics(null);
     setTopicsApproved(false);
     setTopicsError("");
@@ -323,39 +381,39 @@ export default function App() {
     }
   }
 
-  async function loadLessons() {
+  async function loadLessons(options = {}) {
     if (!selectedJobId) return;
     setLessonsError("");
-    setActionLoading(true);
+    if (!options.silent) setActionLoading(true);
     try {
       const response = await getLessons(selectedJobId);
-      setLessons(itemsFromResponse(response, "lessons"));
-      setGroupedLessons(Array.isArray(response?.grouped_by_topic) ? response.grouped_by_topic : []);
+      setLessons(Array.isArray(response?.lessons) ? response.lessons : itemsFromResponse(response, "lessons"));
+      setGroupedLessons(Array.isArray(response?.grouped_by_topic) ? response.grouped_by_topic : Array.isArray(response?.groups) ? response.groups : []);
       setLessonsApproved(Boolean(response?.approved));
       setActiveStep(WORKFLOW_STEPS.lessons);
     } catch (err) {
-      setLessons(null);
+      if (!options.silent) setLessons(null);
       setLessonsError(err.message);
     } finally {
-      setActionLoading(false);
+      if (!options.silent) setActionLoading(false);
     }
   }
 
-  async function loadChunks() {
+  async function loadChunks(options = {}) {
     if (!selectedJobId) return;
     setChunksError("");
-    setActionLoading(true);
+    if (!options.silent) setActionLoading(true);
     try {
       const response = await getChunks(selectedJobId);
-      setChunks(itemsFromResponse(response, "chunks"));
-      setGroupedChunks(Array.isArray(response?.grouped_by_lesson) ? response.grouped_by_lesson : []);
+      setChunks(Array.isArray(response?.chunks) ? response.chunks : itemsFromResponse(response, "chunks"));
+      setGroupedChunks(Array.isArray(response?.grouped_by_lesson) ? response.grouped_by_lesson : Array.isArray(response?.groups) ? response.groups : []);
       setChunksApproved(Boolean(response?.approved));
       setActiveStep(WORKFLOW_STEPS.chunks);
     } catch (err) {
-      setChunks(null);
+      if (!options.silent) setChunks(null);
       setChunksError(err.message);
     } finally {
-      setActionLoading(false);
+      if (!options.silent) setActionLoading(false);
     }
   }
 
@@ -474,6 +532,21 @@ export default function App() {
   const geminiCooldownSeconds = status?.cooldown_seconds || 300;
   const isBusy = actionLoading || BUSY_STATUSES.has(selectedStatus);
   const shortJobId = selectedJobId ? `${selectedJobId.slice(0, 8)}...${selectedJobId.slice(-4)}` : "-";
+  const currentLessonTopicNum = selectedTopicNum || status?.current_topic_num || job?.current_topic_num || "";
+  const approvedTopicNums = [
+    ...(Array.isArray(status?.approved_topic_nums) ? status.approved_topic_nums : []),
+    ...(Array.isArray(job?.approved_topic_nums) ? job.approved_topic_nums : []),
+  ].map((value) => String(Number(value) || value));
+  const currentLessonTopicApproved = currentLessonTopicNum
+    ? approvedTopicNums.includes(String(Number(currentLessonTopicNum) || currentLessonTopicNum)) || (Array.isArray(topics) && topics.some((topic) => String(Number(topic?.topic_num) || topic?.topic_num) === String(Number(currentLessonTopicNum) || currentLessonTopicNum) && (topic?.approved || topic?.metadata_edu_saved || topic?.minio_uploaded)))
+    : Array.isArray(topics) && topics.some((topic) => topic?.approved || topic?.metadata_edu_saved || topic?.minio_uploaded);
+  const currentChunkLessonNum = selectedLessonNum || status?.current_lesson_num || job?.current_lesson_num || "";
+  const hasApprovedLessonHint = Boolean(
+    (status?.approved_lesson_count ?? job?.approved_lesson_count ?? 0) > 0 ||
+    (Array.isArray(status?.approved_lesson_nums) && status.approved_lesson_nums.length > 0) ||
+    (Array.isArray(job?.approved_lesson_nums) && job.approved_lesson_nums.length > 0) ||
+    (Array.isArray(lessons) && lessons.some((lesson) => lesson?.approved || lesson?.metadata_edu_saved || lesson?.minio_uploaded))
+  );
   const rawData = {
     job,
     status,
@@ -482,6 +555,33 @@ export default function App() {
       topic_count: status?.topic_count ?? job?.topic_count ?? (Array.isArray(topics) ? topics.length : 0),
       current_status: selectedStatus,
       can_review_topics: Boolean(status?.can_review_topics || job?.can_review_topics || (Array.isArray(topics) && topics.length > 0)),
+    },
+    lesson_debug: {
+      lessons_partial_exists: Boolean(status?.lessons_partial_exists || job?.lessons_partial_exists || status?.has_lessons || job?.has_lessons),
+      lesson_count: status?.lesson_count ?? job?.lesson_count ?? (Array.isArray(lessons) ? lessons.length : 0),
+      current_topic_num: currentLessonTopicNum || null,
+      current_topic_lesson_count: status?.current_topic_lesson_count ?? job?.current_topic_lesson_count ?? (
+        Array.isArray(lessons) && currentLessonTopicNum
+          ? lessons.filter((lesson) => String(lesson?.topic_num) === String(currentLessonTopicNum)).length
+          : 0
+      ),
+      can_review_lessons: Boolean(status?.can_review_lessons || job?.can_review_lessons || (Array.isArray(lessons) && lessons.length > 0)),
+      progress_status: status?.status || selectedStatus,
+      progress_stage: status?.stage || job?.stage,
+    },
+    chunk_debug: {
+      chunks_partial_exists: Boolean(status?.chunks_partial_exists || job?.chunks_partial_exists || status?.has_chunks || job?.has_chunks),
+      chunk_count: status?.chunk_count ?? job?.chunk_count ?? (Array.isArray(chunks) ? chunks.length : 0),
+      current_lesson_num: currentChunkLessonNum || null,
+      current_lesson_chunk_count: status?.current_lesson_chunk_count ?? job?.current_lesson_chunk_count ?? (
+        Array.isArray(chunks) && currentChunkLessonNum
+          ? chunks.filter((chunk) => String(Number(chunk?.lesson_num) || chunk?.lesson_num) === String(Number(currentChunkLessonNum) || currentChunkLessonNum)).length
+          : 0
+      ),
+      can_review_chunks: Boolean(status?.can_review_chunks || job?.can_review_chunks || (Array.isArray(chunks) && chunks.length > 0)),
+      approved_lesson_available: hasApprovedLessonHint,
+      progress_status: status?.status || selectedStatus,
+      progress_stage: status?.stage || job?.stage,
     },
     topics,
     lessons,
@@ -541,8 +641,8 @@ export default function App() {
 
   function canEnterStep(step) {
     if (step === WORKFLOW_STEPS.upload || step === WORKFLOW_STEPS.topics) return true;
-    if (step === WORKFLOW_STEPS.lessons) return hasApprovedTopics || Array.isArray(lessons);
-    if (step === WORKFLOW_STEPS.chunks) return hasApprovedLessons || Array.isArray(chunks);
+    if (step === WORKFLOW_STEPS.lessons) return hasApprovedTopics || Array.isArray(lessons) || Boolean(job?.can_review_lessons || status?.can_review_lessons);
+    if (step === WORKFLOW_STEPS.chunks) return hasApprovedLessons || hasApprovedLessonHint || Array.isArray(chunks) || Boolean(job?.can_review_chunks || status?.can_review_chunks);
     if (step === WORKFLOW_STEPS.bundle) return hasApprovedChunks || Boolean(bundleResult || mongoResult);
     return false;
   }
@@ -744,7 +844,8 @@ export default function App() {
                   jobId={selectedJobId}
                   lessons={lessons}
                   groupedByTopic={groupedLessons}
-                  selectedTopicNum={selectedTopicNum}
+                  selectedTopicNum={currentLessonTopicNum}
+                  selectedTopicApproved={currentLessonTopicApproved}
                   approved={lessonsApproved}
                   loading={actionLoading}
                   status={status}
@@ -758,6 +859,16 @@ export default function App() {
                     reload: async () => startPolling(),
                     onError: setLessonsError,
                   })}
+                  onExtractForSelectedTopic={currentLessonTopicNum ? () => runAction(() => extractLessonsForTopic(selectedJobId, currentLessonTopicNum), {
+                    loadingMessage: `Đang trích xuất bài học cho Topic ${String(currentLessonTopicNum).padStart(2, "0")}...`,
+                    success: `Đang trích xuất bài học cho Topic ${String(currentLessonTopicNum).padStart(2, "0")}.`,
+                    reload: async () => {
+                      setSelectedTopicNum(String(currentLessonTopicNum));
+                      await loadLessons({ silent: true });
+                      startPolling();
+                    },
+                    onError: setLessonsError,
+                  }) : null}
                   onSave={() => runAction(() => saveLessons(selectedJobId, lessons || []), { success: "Đã lưu chỉnh sửa bài học.", reload: loadLessons, onError: setLessonsError })}
                   onApprove={() => runAction(() => approveLessons(selectedJobId, lessons || []), {
                     success: "Đã lưu metadata bài học. Tiếp tục trích xuất chunk.",
@@ -779,6 +890,7 @@ export default function App() {
                       success: `Đang trích xuất chunk cho Lesson ${String(lesson.lesson_num).padStart(2, "0")}.`,
                       reload: async () => {
                         setActiveStep(WORKFLOW_STEPS.chunks);
+                        await loadChunks({ silent: true });
                         startPolling();
                       },
                       onError: setLessonsError,
@@ -794,6 +906,8 @@ export default function App() {
                   jobId={selectedJobId}
                   chunks={chunks}
                   groupedByLesson={groupedChunks}
+                  selectedLessonNum={currentChunkLessonNum}
+                  hasApprovedLessons={hasApprovedLessonHint}
                   approved={chunksApproved}
                   loading={actionLoading}
                   status={status}
@@ -804,7 +918,10 @@ export default function App() {
                   onExtract={() => runAction(() => extractChunks(selectedJobId), {
                     loadingMessage: "Đang trích xuất chunk bằng Gemini...",
                     success: "Đang trích xuất chunk bằng Gemini...",
-                    reload: async () => startPolling(),
+                    reload: async () => {
+                      await loadChunks({ silent: true });
+                      startPolling();
+                    },
                     onError: setChunksError,
                   })}
                   onSave={() => runAction(() => saveChunks(selectedJobId, chunks || []), { success: "Đã lưu chỉnh sửa chunk.", reload: loadChunks, onError: setChunksError })}
@@ -895,6 +1012,29 @@ export default function App() {
               <dt>Số topic</dt><dd>{rawData.topic_debug.topic_count}</dd>
               <dt>Status</dt><dd>{rawData.topic_debug.current_status || "-"}</dd>
               <dt>Cho phép duyệt</dt><dd>{rawData.topic_debug.can_review_topics ? "Có" : "Không"}</dd>
+            </dl>
+          </section>
+          <section className="panel inspectorCard">
+            <h3>Debug bài học</h3>
+            <dl className="statusGrid">
+              <dt>lessons_partial</dt><dd>{rawData.lesson_debug.lessons_partial_exists ? "Có" : "Không"}</dd>
+              <dt>Số bài học</dt><dd>{rawData.lesson_debug.lesson_count}</dd>
+              <dt>Topic hiện tại</dt><dd>{rawData.lesson_debug.current_topic_num || "-"}</dd>
+              <dt>Bài học topic</dt><dd>{rawData.lesson_debug.current_topic_lesson_count}</dd>
+              <dt>Cho phép duyệt</dt><dd>{rawData.lesson_debug.can_review_lessons ? "Có" : "Không"}</dd>
+              <dt>Progress</dt><dd>{rawData.lesson_debug.progress_status || "-"} / {rawData.lesson_debug.progress_stage || "-"}</dd>
+            </dl>
+          </section>
+          <section className="panel inspectorCard">
+            <h3>Debug chunk</h3>
+            <dl className="statusGrid">
+              <dt>chunks_partial</dt><dd>{rawData.chunk_debug.chunks_partial_exists ? "Có" : "Không"}</dd>
+              <dt>Số chunk</dt><dd>{rawData.chunk_debug.chunk_count}</dd>
+              <dt>Lesson hiện tại</dt><dd>{rawData.chunk_debug.current_lesson_num || "-"}</dd>
+              <dt>Chunk lesson</dt><dd>{rawData.chunk_debug.current_lesson_chunk_count}</dd>
+              <dt>Cho phép duyệt</dt><dd>{rawData.chunk_debug.can_review_chunks ? "Có" : "Không"}</dd>
+              <dt>Bài học đã duyệt</dt><dd>{rawData.chunk_debug.approved_lesson_available ? "Có" : "Không"}</dd>
+              <dt>Progress</dt><dd>{rawData.chunk_debug.progress_status || "-"} / {rawData.chunk_debug.progress_stage || "-"}</dd>
             </dl>
           </section>
           <StatusPanel job={job} status={status} />

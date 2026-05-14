@@ -468,25 +468,59 @@ def read_chunks(job_id: str) -> dict[str, Any]:
     ensure_job_exists(job_id)
     approved_path = _workspace_file(job_id, "approved_chunks.json")
     partial_path = _workspace_file(job_id, "chunks_partial.json")
+    partial_exists = partial_path.exists()
     if approved_path.exists():
         raw = read_json(approved_path)
         chunks = _extract_items(raw, "chunks")
+        approved_ids = [str(value) for value in raw.get("approved_chunk_ids", []) if value is not None]
+        pending_ids = raw.get("pending_chunk_ids", [])
+        groups = raw.get("grouped_by_lesson") or _group_chunks(chunks)
         return {
             "ok": True,
             "job_id": job_id,
             "approved": bool(raw.get("approved_all", raw.get("approved", False))),
             "approved_all": bool(raw.get("approved_all", raw.get("approved", False))),
-            "approved_chunk_ids": raw.get("approved_chunk_ids", []),
-            "pending_chunk_ids": raw.get("pending_chunk_ids", []),
+            "approved_chunk_ids": approved_ids,
+            "pending_chunk_ids": pending_ids,
             "chunks": chunks,
-            "grouped_by_lesson": raw.get("grouped_by_lesson") or _group_chunks(chunks),
+            "grouped_by_lesson": groups,
+            "groups": groups,
+            "chunk_count": len(chunks),
+            "chunks_partial_exists": partial_exists,
             "raw": raw,
         }
     if partial_path.exists():
         raw = read_json(partial_path)
         chunks = _extract_items(raw, "chunks")
-        return {"ok": True, "job_id": job_id, "approved": False, "chunks": chunks, "grouped_by_lesson": raw.get("grouped_by_lesson") or _group_chunks(chunks), "raw": raw}
-    raise FileNotFoundError("No chunks found for this job.")
+        groups = raw.get("grouped_by_lesson") or _group_chunks(chunks)
+        pending_ids = [str(chunk.get("chunk_id") or chunk.get("id")) for chunk in chunks if chunk.get("chunk_id") or chunk.get("id")]
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "approved": False,
+            "approved_all": False,
+            "chunks": chunks,
+            "grouped_by_lesson": groups,
+            "groups": groups,
+            "chunk_count": len(chunks),
+            "chunks_partial_exists": True,
+            "approved_chunk_ids": [],
+            "pending_chunk_ids": pending_ids,
+            "raw": raw,
+        }
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "approved": False,
+        "approved_all": False,
+        "chunks": [],
+        "grouped_by_lesson": [],
+        "groups": [],
+        "chunk_count": 0,
+        "chunks_partial_exists": False,
+        "approved_chunk_ids": [],
+        "pending_chunk_ids": [],
+    }
 
 
 def _preview_roots(job_id: str) -> list[Path]:

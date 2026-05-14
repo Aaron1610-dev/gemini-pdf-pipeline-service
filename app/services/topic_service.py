@@ -479,14 +479,31 @@ def extract_topics_for_job(job_id: str) -> None:
 def read_topics(job_id: str) -> dict[str, Any]:
     ensure_job_exists(job_id)
     partial_path = _workspace_file(job_id, "topics_partial.json")
-    if partial_path.exists():
-        data = _normalize_approved_topics_payload(job_id)
-        return {"ok": True, "job_id": job_id, **data}
     approved_path = _workspace_file(job_id, "approved_topics.json")
-    if approved_path.exists():
+    partial_exists = partial_path.exists()
+    if partial_exists or approved_path.exists():
         data = _normalize_approved_topics_payload(job_id)
-        return {"ok": True, "job_id": job_id, **data}
-    raise FileNotFoundError("No topics found for this job.")
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "topics_partial_exists": partial_exists,
+            **data,
+        }
+    # Job exists but no topic files yet — return a well-formed empty state
+    # instead of raising 404, so callers can distinguish "no topics yet" from
+    # "job not found".
+    return {
+        "ok": True,
+        "approved": False,
+        "approved_all": False,
+        "topics": [],
+        "topic_count": 0,
+        "topics_partial_exists": False,
+        "approved_topic_nums": [],
+        "pending_topic_nums": [],
+        "job_id": job_id,
+        "message": "Chưa có dữ liệu chủ đề. Hãy trích xuất chủ đề trước.",
+    }
 
 
 def save_topics(job_id: str, topics: list[dict[str, Any]]) -> dict[str, Any]:

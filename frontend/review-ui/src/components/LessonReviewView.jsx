@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getLessonPreviewUrl, getSourcePreviewUrl } from "../api/reviewApi.js";
 import EmptyState from "./EmptyState.jsx";
 import ErrorState from "./ErrorState.jsx";
@@ -32,6 +32,7 @@ export default function LessonReviewView({
   lessons,
   groupedByTopic,
   selectedTopicNum,
+  selectedTopicApproved,
   approved,
   loading,
   status,
@@ -40,6 +41,7 @@ export default function LessonReviewView({
   onChange,
   onLoad,
   onExtract,
+  onExtractForSelectedTopic,
   onSave,
   onApprove,
   onApproveLesson,
@@ -48,17 +50,34 @@ export default function LessonReviewView({
   onNext,
 }) {
   const safeLessons = Array.isArray(lessons) ? lessons : [];
-  const groups = useMemo(() => groupsFrom(safeLessons, groupedByTopic), [safeLessons, groupedByTopic]);
+  const normalizedSelectedTopicNum = selectedTopicNum ? String(Number(selectedTopicNum) || selectedTopicNum) : "";
+  const topicLessons = useMemo(() => (
+    normalizedSelectedTopicNum
+      ? safeLessons.filter((lesson) => String(Number(lesson?.topic_num) || lesson?.topic_num || "") === normalizedSelectedTopicNum)
+      : safeLessons
+  ), [safeLessons, normalizedSelectedTopicNum]);
+  const visibleLessons = normalizedSelectedTopicNum ? topicLessons : safeLessons;
+  const visibleGroupedByTopic = useMemo(() => {
+    if (!normalizedSelectedTopicNum || topicLessons.length === 0) return groupedByTopic;
+    return groupsFrom(topicLessons, []);
+  }, [groupedByTopic, normalizedSelectedTopicNum, topicLessons]);
+  const groups = useMemo(() => groupsFrom(visibleLessons, visibleGroupedByTopic), [visibleLessons, visibleGroupedByTopic]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
   const [selectedLessonName, setSelectedLessonName] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const selectedGroup = groups[Math.min(selectedGroupIndex, Math.max(groups.length - 1, 0))] || { lessons: [] };
-  const selectedLesson = selectedGroup.lessons?.find((lesson) => lesson.name === selectedLessonName) || selectedGroup.lessons?.[0] || safeLessons[0];
+  const selectedLesson = selectedGroup.lessons?.find((lesson) => lesson.name === selectedLessonName) || selectedGroup.lessons?.[0] || visibleLessons[0];
   const selectedLessonIndex = selectedLesson ? safeLessons.findIndex((item) => item === selectedLesson || item.name === selectedLesson.name) : -1;
-  const approvedCount = safeLessons.filter((lesson) => lesson.metadata_edu_saved || lesson.approved).length;
+  const approvedCount = visibleLessons.filter((lesson) => lesson.metadata_edu_saved || lesson.approved).length;
   const sourcePreviewUrl = jobId ? getSourcePreviewUrl(jobId) : "";
   const lessonPreviewUrl = jobId && selectedLesson?.lesson_num ? getLessonPreviewUrl(jobId, selectedLesson.lesson_num) : "";
   const isExtracting = jobStatus === "extracting_lessons" || status?.status === "extracting_lessons";
+  const isCooldown = jobStatus === "waiting_gemini_cooldown" || status?.status === "waiting_gemini_cooldown";
+
+  useEffect(() => {
+    setSelectedGroupIndex(0);
+    setSelectedLessonName("");
+  }, [normalizedSelectedTopicNum, visibleLessons.length]);
 
   function updateSelected(field, value) {
     if (selectedLessonIndex >= 0) onChange(selectedLessonIndex, field, value);
@@ -73,30 +92,43 @@ export default function LessonReviewView({
           <p className="muted">Đối chiếu sách gốc với PDF bài học đã cắt và lưu metadata bài học.</p>
         </div>
         <div className="topicHeaderActions">
-          <button type="button" onClick={onExtract} disabled={loading}>Trích xuất bài học</button>
+          <button type="button" onClick={normalizedSelectedTopicNum && onExtractForSelectedTopic ? onExtractForSelectedTopic : onExtract} disabled={loading}>
+            {visibleLessons.length > 0 ? "Trích xuất lại bài học" : normalizedSelectedTopicNum ? `Trích xuất bài học Topic ${pad2(normalizedSelectedTopicNum)}` : "Trích xuất bài học"}
+          </button>
           <button type="button" className="secondary-action" onClick={onLoad} disabled={loading}>Tải lại</button>
         </div>
       </div>
 
-      {safeLessons.length > 0 ? (
+      {visibleLessons.length > 0 ? (
         <div className="summaryCards">
-          <div className="summaryCard"><span>Tổng bài học</span><strong>{safeLessons.length}</strong></div>
+          <div className="summaryCard"><span>Tổng bài học</span><strong>{visibleLessons.length}</strong></div>
           <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}</strong></div>
-          <div className="summaryCard"><span>Chưa duyệt</span><strong>{Math.max(safeLessons.length - approvedCount, 0)}</strong></div>
+          <div className="summaryCard"><span>Chưa duyệt</span><strong>{Math.max(visibleLessons.length - approvedCount, 0)}</strong></div>
         </div>
       ) : null}
 
       {loading && !isExtracting ? <LoadingState message="Đang tải bài học..." /> : null}
       {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
-      {isExtracting && safeLessons.length === 0 ? (
+      {isExtracting && visibleLessons.length === 0 ? (
         <ProcessingState
           title="Đang trích xuất bài học"
-          message="Hệ thống đang phân tích các chủ đề đã duyệt để tạo danh sách bài học và PDF tương ứng."
+          message={normalizedSelectedTopicNum ? `Hệ thống đang cắt các bài học từ Topic ${pad2(normalizedSelectedTopicNum)}. Vui lòng chờ.` : "Hệ thống đang phân tích các chủ đề đã duyệt để tạo danh sách bài học và PDF tương ứng."}
           status={status}
         />
       ) : null}
-      {!isExtracting && !loading && !error && lessons == null ? <EmptyState message="Chưa có dữ liệu bài học. Hãy duyệt chủ đề trước khi trích xuất bài học." /> : null}
-      {!isExtracting && !loading && !error && lessons != null && safeLessons.length === 0 ? <EmptyState message="Danh sách bài học đang trống." /> : null}
+      {isCooldown && visibleLessons.length === 0 ? (
+        <EmptyState title="Gemini đang cooldown" message="Gemini đang cooldown. Có thể thử lại sau." />
+      ) : null}
+      {!isExtracting && !isCooldown && !loading && !error && visibleLessons.length === 0 ? (
+        <EmptyState
+          title="Không có dữ liệu"
+          message={
+            normalizedSelectedTopicNum && !selectedTopicApproved
+              ? "Bạn cần duyệt chủ đề này trước khi trích xuất bài học."
+              : "Chưa có dữ liệu bài học. Hãy bấm Trích xuất bài học để bắt đầu."
+          }
+        />
+      ) : null}
 
       {groups.length > 0 ? (
         <div className="review-workspace lessonReviewLayout">
@@ -208,7 +240,7 @@ export default function LessonReviewView({
         </button>
         {advancedOpen ? (
           <div className="advancedBox">
-            <button type="button" onClick={onApprove} disabled={loading || approved || safeLessons.length === 0}>Duyệt tất cả bài học</button>
+            <button type="button" onClick={onApprove} disabled={loading || approved || visibleLessons.length === 0}>Duyệt tất cả bài học</button>
           </div>
         ) : null}
       </div>
@@ -217,7 +249,7 @@ export default function LessonReviewView({
         <button type="button" onClick={onBack}>Quay lại</button>
         {approvedCount > 0 ? (
           <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục chunk</button>
-        ) : safeLessons.length > 0 ? (
+        ) : visibleLessons.length > 0 ? (
           <span className="inlineHelper">Bạn cần duyệt ít nhất một bài học trước khi sang bước chunk.</span>
         ) : null}
       </div>

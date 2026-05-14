@@ -85,9 +85,28 @@ def extract_chunks_for_selected_lesson(job_id: str, lesson_num: int, background_
 
 
 @router.get("/{job_id}/chunks")
-def get_chunks(job_id: str):
+def get_chunks(job_id: str, lesson_num: int | None = Query(default=None)):
     try:
-        return read_chunks(job_id)
+        payload = read_chunks(job_id)
+        if lesson_num is not None:
+            chunks = [
+                chunk for chunk in payload.get("chunks", [])
+                if str(chunk.get("lesson_num")) == str(lesson_num)
+            ]
+            payload = {
+                **payload,
+                "chunks": chunks,
+                "grouped_by_lesson": [
+                    group for group in payload.get("grouped_by_lesson", [])
+                    if str(group.get("lesson_num")) == str(lesson_num)
+                ],
+                "groups": [
+                    group for group in payload.get("groups", payload.get("grouped_by_lesson", []))
+                    if str(group.get("lesson_num")) == str(lesson_num)
+                ],
+                "chunk_count": len(chunks),
+            }
+        return payload
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

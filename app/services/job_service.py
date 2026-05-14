@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -244,13 +245,152 @@ def _topic_review_summary(job_id: str) -> dict:
             approved_topics = []
 
     topic_count = len(topics)
+    approved_topic_nums = [
+        _num_value(topic.get("topic_num") if isinstance(topic, dict) else topic)
+        for topic in approved_topics
+    ]
+    approved_topic_nums = [num for num in approved_topic_nums if num is not None]
     return {
         "topics_partial_exists": topics_path.exists(),
         "approved_topics_exists": approved_path.exists(),
         "has_topics": topic_count > 0,
         "topic_count": topic_count,
         "approved_topic_count": len(approved_topics),
+        "approved_topic_nums": approved_topic_nums,
         "can_review_topics": topic_count > 0,
+    }
+
+
+def _num_value(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lesson_review_summary(job_id: str) -> dict:
+    lessons_path = job_workspace(job_id) / "lessons_partial.json"
+    approved_path = job_workspace(job_id) / "approved_lessons.json"
+    state_path = job_workspace(job_id) / "extraction_state.json"
+    lessons: list = []
+    approved_lessons: list = []
+
+    if lessons_path.exists():
+        raw_lessons = read_json(lessons_path)
+        lessons = raw_lessons.get("lessons", raw_lessons) if isinstance(raw_lessons, dict) else raw_lessons
+        if not isinstance(lessons, list):
+            lessons = []
+
+    if approved_path.exists():
+        raw_approved = read_json(approved_path)
+        if isinstance(raw_approved, dict):
+            approved_nums = raw_approved.get("approved_lesson_nums") or []
+            if approved_nums:
+                approved_lessons = approved_nums
+            else:
+                raw_lessons = raw_approved.get("lessons") or []
+                approved_lessons = [lesson for lesson in raw_lessons if isinstance(lesson, dict) and lesson.get("approved")]
+        elif isinstance(raw_approved, list):
+            approved_lessons = [lesson for lesson in raw_approved if not isinstance(lesson, dict) or lesson.get("approved")]
+        if not isinstance(approved_lessons, list):
+            approved_lessons = []
+
+    state = _read_json_optional(state_path)
+    current_topic_num = state.get("selected_topic_num") or state.get("current_topic_num") or state.get("lesson_topic_num")
+    current_topic_int = _num_value(current_topic_num)
+    current_topic_lesson_count = 0
+    if current_topic_int is not None:
+        current_topic_lesson_count = sum(1 for lesson in lessons if _num_value((lesson or {}).get("topic_num")) == current_topic_int)
+
+    lesson_count = len(lessons)
+    approved_lesson_nums = [
+        _num_value(lesson.get("lesson_num") if isinstance(lesson, dict) else lesson)
+        for lesson in approved_lessons
+    ]
+    approved_lesson_nums = [num for num in approved_lesson_nums if num is not None]
+    return {
+        "lessons_partial_exists": lessons_path.exists(),
+        "approved_lessons_exists": approved_path.exists(),
+        "has_lessons": lesson_count > 0,
+        "lesson_count": lesson_count,
+        "approved_lesson_count": len(approved_lessons),
+        "approved_lesson_nums": approved_lesson_nums,
+        "can_review_lessons": lesson_count > 0,
+        "current_topic_num": str(current_topic_num) if current_topic_num is not None else None,
+        "current_topic_lesson_count": current_topic_lesson_count,
+    }
+
+
+def _chunk_review_summary(job_id: str) -> dict:
+    chunks_path = job_workspace(job_id) / "chunks_partial.json"
+    approved_path = job_workspace(job_id) / "approved_chunks.json"
+    state_path = job_workspace(job_id) / "extraction_state.json"
+    progress_path = job_progress_path(job_id)
+    result_path = job_result_path(job_id)
+    chunks: list = []
+    approved_chunks: list = []
+
+    chunk_source_path = approved_path if approved_path.exists() else chunks_path
+    if chunk_source_path.exists():
+        raw_chunks = read_json(chunk_source_path)
+        chunks = raw_chunks.get("chunks", raw_chunks) if isinstance(raw_chunks, dict) else raw_chunks
+        if not isinstance(chunks, list):
+            chunks = []
+
+    if approved_path.exists():
+        raw_approved = read_json(approved_path)
+        if isinstance(raw_approved, dict):
+            approved_ids = raw_approved.get("approved_chunk_ids") or []
+            if approved_ids:
+                approved_chunks = approved_ids
+            else:
+                raw_chunks = raw_approved.get("chunks") or []
+                approved_chunks = [
+                    chunk for chunk in raw_chunks
+                    if isinstance(chunk, dict) and (chunk.get("approved") or chunk.get("waiting_for_kaggle"))
+                ]
+        elif isinstance(raw_approved, list):
+            approved_chunks = [
+                chunk for chunk in raw_approved
+                if not isinstance(chunk, dict) or chunk.get("approved") or chunk.get("waiting_for_kaggle")
+            ]
+        if not isinstance(approved_chunks, list):
+            approved_chunks = []
+
+    state = _read_json_optional(state_path)
+    progress = _read_json_optional(progress_path)
+    result = _read_json_optional(result_path)
+    current_lesson_num = (
+        state.get("selected_lesson_num")
+        or state.get("current_lesson_num")
+        or state.get("chunk_lesson_num")
+    )
+    if current_lesson_num is None:
+        text = " ".join(str(value or "") for value in [
+            progress.get("message"),
+            progress.get("stage"),
+            result.get("message"),
+            result.get("stage"),
+        ])
+        match = re.search(r"Lesson\s+(\d+)", text, flags=re.IGNORECASE)
+        if match:
+            current_lesson_num = match.group(1)
+
+    current_lesson_int = _num_value(current_lesson_num)
+    current_lesson_chunk_count = 0
+    if current_lesson_int is not None:
+        current_lesson_chunk_count = sum(1 for chunk in chunks if _num_value((chunk or {}).get("lesson_num")) == current_lesson_int)
+
+    chunk_count = len(chunks)
+    return {
+        "chunks_partial_exists": chunks_path.exists(),
+        "approved_chunks_exists": approved_path.exists(),
+        "has_chunks": chunk_count > 0,
+        "chunk_count": chunk_count,
+        "approved_chunk_count": len(approved_chunks),
+        "can_review_chunks": chunks_path.exists() and chunk_count > 0,
+        "current_lesson_num": str(current_lesson_num) if current_lesson_num is not None else None,
+        "current_lesson_chunk_count": current_lesson_chunk_count,
     }
 
 
@@ -307,6 +447,8 @@ def get_job(job_id: str) -> dict:
     ensure_job_exists(job_id)
     state = read_json(job_state_path(job_id))
     state.update(_topic_review_summary(job_id))
+    state.update(_lesson_review_summary(job_id))
+    state.update(_chunk_review_summary(job_id))
     state["paths"] = {
         "workspace_path": str(job_workspace(job_id)),
         "source_pdf_path": str(job_source_pdf_path(job_id)),
@@ -347,6 +489,8 @@ def list_jobs() -> dict:
                 "error": state.get("error"),
                 "minio": state.get("minio"),
                 **_topic_review_summary(job_id),
+                **_lesson_review_summary(job_id),
+                **_chunk_review_summary(job_id),
             }
         )
     jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
@@ -378,6 +522,8 @@ def get_status(job_id: str) -> dict:
     progress["recovered"] = bool(state.get("recovered"))
     progress["recovery_reason"] = state.get("recovery_reason")
     progress.update(_topic_review_summary(job_id))
+    progress.update(_lesson_review_summary(job_id))
+    progress.update(_chunk_review_summary(job_id))
     return progress
 
 

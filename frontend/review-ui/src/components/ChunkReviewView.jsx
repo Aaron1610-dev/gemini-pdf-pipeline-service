@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getChunkPreviewUrl, getSourcePreviewUrl } from "../api/reviewApi.js";
 import EmptyState from "./EmptyState.jsx";
 import ErrorState from "./ErrorState.jsx";
@@ -33,6 +33,8 @@ export default function ChunkReviewView({
   jobId,
   chunks,
   groupedByLesson,
+  selectedLessonNum,
+  hasApprovedLessons,
   approved,
   loading,
   status,
@@ -52,7 +54,18 @@ export default function ChunkReviewView({
   onNext,
 }) {
   const safeChunks = Array.isArray(chunks) ? chunks : [];
-  const groups = useMemo(() => groupsFrom(safeChunks, groupedByLesson), [safeChunks, groupedByLesson]);
+  const normalizedSelectedLessonNum = selectedLessonNum ? String(Number(selectedLessonNum) || selectedLessonNum) : "";
+  const lessonChunks = useMemo(() => (
+    normalizedSelectedLessonNum
+      ? safeChunks.filter((chunk) => String(Number(chunk?.lesson_num) || chunk?.lesson_num || "") === normalizedSelectedLessonNum)
+      : safeChunks
+  ), [safeChunks, normalizedSelectedLessonNum]);
+  const visibleChunks = normalizedSelectedLessonNum ? lessonChunks : safeChunks;
+  const visibleGroupedByLesson = useMemo(() => {
+    if (!normalizedSelectedLessonNum || lessonChunks.length === 0) return groupedByLesson;
+    return groupsFrom(lessonChunks, []);
+  }, [groupedByLesson, normalizedSelectedLessonNum, lessonChunks]);
+  const groups = useMemo(() => groupsFrom(visibleChunks, visibleGroupedByLesson), [visibleChunks, visibleGroupedByLesson]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
   const [selectedChunkId, setSelectedChunkId] = useState("");
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -60,13 +73,19 @@ export default function ChunkReviewView({
   const selectedGroup = groups[Math.min(selectedGroupIndex, Math.max(groups.length - 1, 0))] || { chunks: [] };
   const selectedChunk = selectedGroup.chunks.find((chunk) => (chunk.chunk_id || chunk.id) === selectedChunkId) || selectedGroup.chunks[0] || null;
   const selectedChunkIndex = selectedChunk ? safeChunks.findIndex((item) => item === selectedChunk || item.chunk_id === selectedChunk.chunk_id || item.id === selectedChunk.id) : -1;
-  const approvedCount = safeChunks.filter((chunk) => chunk.approved || chunk.waiting_for_kaggle || chunk.kaggle_finalized || chunk.metadata_edu_saved).length;
+  const approvedCount = visibleChunks.filter((chunk) => chunk.approved || chunk.waiting_for_kaggle || chunk.kaggle_finalized || chunk.metadata_edu_saved).length;
   const selectedChunkPreviewId = selectedChunk ? (selectedChunk.chunk_id || selectedChunk.id) : "";
   const sourcePreviewUrl = jobId ? getSourcePreviewUrl(jobId) : "";
   const chunkPreviewUrl = jobId && selectedChunkPreviewId ? getChunkPreviewUrl(jobId, selectedChunkPreviewId) : "";
-  const waitingCount = safeChunks.filter((chunk) => chunk.waiting_for_kaggle || (chunk.approved && !chunk.kaggle_finalized)).length;
-  const finalizedCount = safeChunks.filter((chunk) => chunk.kaggle_finalized || (chunk.metadata_edu_saved && chunk.minio_uploaded)).length;
+  const waitingCount = visibleChunks.filter((chunk) => chunk.waiting_for_kaggle || (chunk.approved && !chunk.kaggle_finalized)).length;
+  const finalizedCount = visibleChunks.filter((chunk) => chunk.kaggle_finalized || (chunk.metadata_edu_saved && chunk.minio_uploaded)).length;
   const isExtracting = jobStatus === "extracting_chunks" || status?.status === "extracting_chunks";
+  const isCooldown = jobStatus === "waiting_gemini_cooldown" || status?.status === "waiting_gemini_cooldown";
+
+  useEffect(() => {
+    setSelectedGroupIndex(0);
+    setSelectedChunkId("");
+  }, [normalizedSelectedLessonNum, visibleChunks.length]);
 
   function chunkId(chunk, index) {
     return chunk.chunk_id || chunk.id || `${chunk.lesson_stem || "lesson"}:${chunk.chunk_num || index}`;
@@ -101,38 +120,52 @@ export default function ChunkReviewView({
           <p className="muted">Đối chiếu sách gốc với chunk được AI cắt ra. Chunk chỉ được lưu chính thức sau khi Kaggle xử lý.</p>
         </div>
         <div className="topicHeaderActions">
-          <button type="button" className={safeChunks.length ? "secondary-action" : "primaryButton"} onClick={onExtract} disabled={loading}>
-            {safeChunks.length ? "Trích xuất lại chunk" : "Trích xuất chunk"}
+          <button type="button" className={visibleChunks.length ? "secondary-action" : "primaryButton"} onClick={onExtract} disabled={loading || isExtracting}>
+            {isExtracting ? "Đang trích xuất..." : visibleChunks.length ? "Trích xuất lại chunk" : "Trích xuất chunk"}
           </button>
           <button type="button" className="secondary-action" onClick={onLoad} disabled={loading}>Tải lại</button>
         </div>
       </div>
-      {safeChunks.length > 0 ? (
+      {visibleChunks.length > 0 ? (
         <div className="summaryCards">
-          <div className="summaryCard"><span>Tổng chunk</span><strong>{safeChunks.length}</strong></div>
+          <div className="summaryCard"><span>Tổng chunk</span><strong>{visibleChunks.length}</strong></div>
           <div className="summaryCard"><span>Đã duyệt</span><strong>{approvedCount}</strong></div>
           <div className="summaryCard"><span>Chờ Kaggle</span><strong>{waitingCount}</strong></div>
           <div className="summaryCard"><span>Đã lưu sau Kaggle</span><strong>{finalizedCount}</strong></div>
         </div>
       ) : null}
-      {safeChunks.length > 0 ? <p className="infoNote">Chunk đã duyệt vẫn là dữ liệu tạm cho tới khi bước Kaggle và finalize hoàn tất.</p> : null}
-      {safeChunks.length > 0 && approvedCount === 0 ? (
+      {visibleChunks.length > 0 ? <p className="infoNote">Chunk đã duyệt vẫn là dữ liệu tạm cho tới khi bước Kaggle và finalize hoàn tất.</p> : null}
+      {visibleChunks.length > 0 && isExtracting ? (
+        <p className="infoNote neutral">{normalizedSelectedLessonNum ? `Đang cập nhật chunk cho Lesson ${pad2(normalizedSelectedLessonNum)}...` : "Đang cập nhật danh sách chunk..."}</p>
+      ) : null}
+      {visibleChunks.length > 0 && approvedCount === 0 ? (
         <p className="infoNote neutral">Hãy duyệt ít nhất một chunk trước khi chuyển sang bước hoàn tất.</p>
       ) : null}
       {approvedCount > 0 ? (
-        <div className="successBox inlineSuccess">Đã duyệt {approvedCount}/{safeChunks.length} chunk. Các chunk đã duyệt đang chờ Kaggle xử lý.</div>
+        <div className="successBox inlineSuccess">Đã duyệt {approvedCount}/{visibleChunks.length} chunk. Các chunk đã duyệt đang chờ Kaggle xử lý.</div>
       ) : null}
       {loading && !isExtracting ? <LoadingState message="Đang tải chunk..." /> : null}
       {error ? <ErrorState message={error} onRetry={onLoad} /> : null}
-      {isExtracting && safeChunks.length === 0 ? (
+      {isExtracting && visibleChunks.length === 0 ? (
         <ProcessingState
           title="Đang trích xuất chunk"
-          message="Hệ thống đang tạo các chunk tạm từ bài học đã duyệt. Chunk chính thức sẽ được lưu sau bước Kaggle."
+          message={normalizedSelectedLessonNum ? `Đang trích xuất chunk cho Lesson ${pad2(normalizedSelectedLessonNum)}...` : "Hệ thống đang tạo các chunk tạm từ bài học đã duyệt. Vui lòng chờ."}
           status={status}
         />
       ) : null}
-      {!isExtracting && !loading && !error && chunks == null ? <EmptyState message="Chưa có dữ liệu chunk. Hãy duyệt bài học trước khi trích xuất chunk." /> : null}
-      {!isExtracting && !loading && !error && chunks != null && safeChunks.length === 0 ? <EmptyState message="Danh sách chunk đang trống." /> : null}
+      {isCooldown && visibleChunks.length === 0 ? (
+        <EmptyState title="Gemini đang cooldown" message="Gemini đang cooldown. Có thể thử lại sau." />
+      ) : null}
+      {!isExtracting && !isCooldown && !loading && !error && visibleChunks.length === 0 ? (
+        <EmptyState
+          title="Không có dữ liệu"
+          message={
+            hasApprovedLessons
+              ? "Chưa có dữ liệu chunk. Hãy bấm Trích xuất chunk để bắt đầu."
+              : "Bạn cần duyệt bài học trước khi trích xuất chunk."
+          }
+        />
+      ) : null}
       {groups.length > 0 ? (
         <div className="review-workspace">
           <aside className="review-navigator">
@@ -232,8 +265,8 @@ export default function ChunkReviewView({
         {toolsOpen ? (
           <div className="advancedBox">
             <div className="actionBar">
-              <button type="button" onClick={onSave} disabled={loading || approved || safeChunks.length === 0}>Lưu chỉnh sửa chunk</button>
-              <button type="button" className="primaryButton" onClick={onApprove} disabled={loading || approved || safeChunks.length === 0}>Duyệt tất cả chunk</button>
+              <button type="button" onClick={onSave} disabled={loading || approved || visibleChunks.length === 0}>Lưu chỉnh sửa chunk</button>
+              <button type="button" className="primaryButton" onClick={onApprove} disabled={loading || approved || visibleChunks.length === 0}>Duyệt tất cả chunk</button>
               <button
                 type="button"
                 onClick={() => onApproveChunkIds?.((selectedGroup.chunks || []).map((chunk) => chunk.chunk_id || chunk.id).filter(Boolean))}
@@ -272,7 +305,7 @@ export default function ChunkReviewView({
         <button type="button" onClick={onBack}>Quay lại</button>
         {approvedCount > 0 ? (
           <button type="button" className="primaryButton" onClick={onNext}>Tiếp tục hoàn tất</button>
-        ) : safeChunks.length > 0 ? (
+        ) : visibleChunks.length > 0 ? (
           <span className="inlineHelper">Bạn cần duyệt ít nhất một chunk trước khi sang bước hoàn tất.</span>
         ) : null}
       </div>

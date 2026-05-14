@@ -1,8 +1,11 @@
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, status
 
-from app.core.config import get_settings
+from pathlib import Path
+
+from app.core.config import ENV_PATH, get_settings
 from app.core.gemini_keys import GeminiKeyError, GeminiKeyManager
+from app.core.paths import output_root, project_root, service_log_root, workspace_root
 
 router = APIRouter(prefix="/api/debug", tags=["debug"])
 
@@ -50,6 +53,30 @@ def _http_error(error: GeminiKeyError) -> HTTPException:
 @router.get("/gemini-keys")
 def get_gemini_keys():
     return _debug_response(_manager())
+
+
+@router.get("/paths")
+def get_debug_paths():
+    workspace = workspace_root()
+    output = output_root()
+    log_dir = service_log_root()
+    children = []
+    if workspace.exists():
+        children = sorted(path.name for path in workspace.iterdir())[:30]
+    return {
+        "ok": True,
+        "project_root": str(project_root()),
+        "cwd": str(Path.cwd()),
+        "env_file": str(ENV_PATH),
+        "workspace_dir": str(workspace),
+        "output_dir": str(output),
+        "log_dir": str(log_dir),
+        "workspace_exists": workspace.exists(),
+        "output_exists": output.exists(),
+        "log_dir_exists": log_dir.exists(),
+        "workspace_children_count": len(list(workspace.iterdir())) if workspace.exists() else 0,
+        "sample_workspace_children": children,
+    }
 
 
 @router.post("/gemini-keys/rotate")

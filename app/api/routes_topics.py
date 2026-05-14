@@ -49,10 +49,10 @@ def extract_topics(job_id: str, background_tasks: BackgroundTasks):
 
 @router.get("/{job_id}/topics")
 def get_topics(job_id: str):
-    try:
-        return read_topics(job_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    # read_topics raises HTTPException (404) only when the job itself does not
+    # exist.  If the job exists but topics_partial.json is missing, it returns
+    # a well-formed empty payload instead of 404.
+    return read_topics(job_id)
 
 
 @router.put("/{job_id}/topics")

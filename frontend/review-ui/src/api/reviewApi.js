@@ -64,6 +64,9 @@ export function extractTopics(jobId) {
 }
 
 export async function getTopics(jobId) {
+  // The backend now returns HTTP 200 with topics=[] when the job exists but
+  // topics_partial.json has not been written yet.  It only returns 404 when
+  // the job itself is not found.
   const raw = await request(`/api/jobs/${encodeURIComponent(jobId)}/topics`);
   const nested = raw?.data && typeof raw.data === "object" ? raw.data : {};
   const topics =
@@ -71,10 +74,18 @@ export async function getTopics(jobId) {
     Array.isArray(nested?.topics) ? nested.topics :
     Array.isArray(raw) ? raw :
     [];
+  // topics_partial_exists lets the UI distinguish "never extracted" (false)
+  // from "extracted but has topics" (true).
+  const topicsPartialExists =
+    raw?.topics_partial_exists != null
+      ? Boolean(raw.topics_partial_exists)
+      : topics.length > 0;
   return {
     ...raw,
     ok: raw?.ok !== false,
     topics,
+    topic_count: topics.length,
+    topics_partial_exists: topicsPartialExists,
     approved: Boolean(raw?.approved ?? raw?.approved_all ?? nested?.approved ?? nested?.approved_all),
     approved_topic_nums: Array.isArray(raw?.approved_topic_nums)
       ? raw.approved_topic_nums
@@ -140,8 +151,37 @@ export function extractLessonsForTopic(jobId, topicNum) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/topics/${encodeURIComponent(topicNum)}/extract-lessons`, { method: "POST" });
 }
 
-export function getLessons(jobId) {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}/lessons`);
+export async function getLessons(jobId) {
+  const raw = await request(`/api/jobs/${encodeURIComponent(jobId)}/lessons`);
+  const nested = raw?.data && typeof raw.data === "object" ? raw.data : {};
+  const lessons =
+    Array.isArray(raw?.lessons) ? raw.lessons :
+    Array.isArray(nested?.lessons) ? nested.lessons :
+    Array.isArray(raw) ? raw :
+    [];
+  const groups =
+    Array.isArray(raw?.grouped_by_topic) ? raw.grouped_by_topic :
+    Array.isArray(raw?.groups) ? raw.groups :
+    Array.isArray(raw?.topics) ? raw.topics :
+    Array.isArray(nested?.grouped_by_topic) ? nested.grouped_by_topic :
+    Array.isArray(nested?.groups) ? nested.groups :
+    Array.isArray(nested?.topics) ? nested.topics :
+    [];
+  return {
+    ...raw,
+    ok: raw?.ok !== false,
+    lessons,
+    approved: Boolean(raw?.approved ?? raw?.approved_all ?? nested?.approved ?? nested?.approved_all),
+    approved_lesson_nums: Array.isArray(raw?.approved_lesson_nums)
+      ? raw.approved_lesson_nums
+      : Array.isArray(nested?.approved_lesson_nums) ? nested.approved_lesson_nums : [],
+    pending_lesson_nums: Array.isArray(raw?.pending_lesson_nums)
+      ? raw.pending_lesson_nums
+      : Array.isArray(nested?.pending_lesson_nums) ? nested.pending_lesson_nums : [],
+    groups,
+    grouped_by_topic: groups,
+    raw,
+  };
 }
 
 export function saveLessons(jobId, lessons) {
@@ -172,8 +212,42 @@ export function extractChunksForLesson(jobId, lessonNum) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/lessons/${encodeURIComponent(lessonNum)}/extract-chunks`, { method: "POST" });
 }
 
-export function getChunks(jobId) {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}/chunks`);
+function flattenGroups(groups, itemKey) {
+  if (!Array.isArray(groups)) return [];
+  return groups.flatMap((group) => Array.isArray(group?.[itemKey]) ? group[itemKey] : []);
+}
+
+export async function getChunks(jobId) {
+  const raw = await request(`/api/jobs/${encodeURIComponent(jobId)}/chunks`);
+  const nested = raw?.data && typeof raw.data === "object" ? raw.data : {};
+  const groups =
+    Array.isArray(raw?.grouped_by_lesson) ? raw.grouped_by_lesson :
+    Array.isArray(raw?.groups) ? raw.groups :
+    Array.isArray(raw?.lessons) ? raw.lessons :
+    Array.isArray(nested?.grouped_by_lesson) ? nested.grouped_by_lesson :
+    Array.isArray(nested?.groups) ? nested.groups :
+    Array.isArray(nested?.lessons) ? nested.lessons :
+    [];
+  const chunks =
+    Array.isArray(raw?.chunks) ? raw.chunks :
+    Array.isArray(nested?.chunks) ? nested.chunks :
+    Array.isArray(raw) ? raw :
+    flattenGroups(groups, "chunks");
+  return {
+    ...raw,
+    ok: raw?.ok !== false,
+    chunks,
+    groups,
+    grouped_by_lesson: groups,
+    approved: Boolean(raw?.approved ?? raw?.approved_all ?? nested?.approved ?? nested?.approved_all),
+    approved_chunk_ids: Array.isArray(raw?.approved_chunk_ids)
+      ? raw.approved_chunk_ids
+      : Array.isArray(nested?.approved_chunk_ids) ? nested.approved_chunk_ids : [],
+    pending_chunk_ids: Array.isArray(raw?.pending_chunk_ids)
+      ? raw.pending_chunk_ids
+      : Array.isArray(nested?.pending_chunk_ids) ? nested.pending_chunk_ids : [],
+    raw,
+  };
 }
 
 export function saveChunks(jobId, chunks) {
